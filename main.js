@@ -38,6 +38,58 @@ function tex(w, h, draw) {
   scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 48, 24), new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide })));
 }
 
+// ---------- Touchable meadow: grass that sways and parts around your fingers ----------
+const GRASS_Y = -0.326;
+const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }, uH1: { value: new THREE.Vector3(9, 9, 9) }, uH2: { value: new THREE.Vector3(9, 9, 9) } };
+{
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(0.7, 48), new THREE.MeshBasicMaterial({ color: 0x1c3a24 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(0, GRASS_Y - 0.001, -0.45); scene.add(ground);
+  const blade = new THREE.PlaneGeometry(0.005, 0.05, 1, 4); blade.translate(0, 0.025, 0);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: grassU, side: THREE.DoubleSide,
+    vertexShader: `
+      uniform float uTime; uniform vec3 uH0, uH1, uH2; varying float vH; varying float vShade;
+      vec2 push(vec3 h, vec3 root, float k) {
+        vec2 d = root.xz - h.xz; float dist = length(d) + 1e-4;
+        float near = (1.0 - smoothstep(0.0, 0.07, dist)) * (1.0 - smoothstep(0.0, 0.08, abs(h.y - root.y - 0.02)));
+        return d / dist * near * k;
+      }
+      void main() {
+        vH = uv.y;
+        vec3 p = position; p.x *= (1.0 - uv.y * 0.9);
+        vec4 root = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec4 w = instanceMatrix * vec4(p, 1.0);
+        float k = uv.y * uv.y;
+        w.x += sin(uTime * 1.3 + root.x * 9.0 + root.z * 7.0) * 0.006 * k;
+        w.z += cos(uTime * 1.1 + root.x * 6.0) * 0.004 * k;
+        vec2 b = push(uH0, root.xyz, 0.035) + push(uH1, root.xyz, 0.035) + push(uH2, root.xyz, 0.035);
+        w.xz += b * k; w.y -= length(b) * k * 0.6;
+        vShade = fract(sin(dot(root.xz, vec2(12.9898, 78.233))) * 43758.5453);
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: `
+      varying float vH; varying float vShade;
+      void main() {
+        vec3 base = vec3(0.07, 0.2, 0.1), tip = mix(vec3(0.38, 0.62, 0.32), vec3(0.55, 0.7, 0.36), vShade);
+        gl_FragColor = vec4(mix(base, tip, vH), 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const N = 9000, grass = new THREE.InstancedMesh(blade, mat, N);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pos = new THREE.Vector3();
+  let n = 0;
+  while (n < N) {
+    const r = Math.sqrt(Math.random()) * 0.65, a = Math.random() * Math.PI * 2;
+    const x = Math.cos(a) * r, z = -0.45 + Math.sin(a) * r * 0.8;
+    if (Math.abs(x) < 0.225 && Math.abs(z + 0.45) < 0.145) continue;   // keep the book clear
+    if (Math.abs(x) < 0.3 && z > -0.33) continue;                          // keep your lap clear so the page stays visible
+    pos.set(x, GRASS_Y, z); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI);
+    const h = 0.6 + Math.random() * 0.8; s.set(1, h, 1);
+    grass.setMatrixAt(n++, m4.compose(pos, q, s));
+  }
+  grass.frustumCulled = false; scene.add(grass);
+}
+
 // ---------- The book ----------
 const BOOK = new THREE.Group(); BOOK.position.set(0, -0.32, -0.45); scene.add(BOOK);
 const PW = 0.2, PD = 0.26;
@@ -358,10 +410,13 @@ const hands = [0, 1].map(i => {
   return { hand, tip, pinching: false };
 });
 function updateHands() {
+  hands.forEach((h, i) => (h.slot = i ? grassU.uH1 : grassU.uH0));
   for (const h of hands) {
     const j = h.hand.joints, ti = j && j['index-finger-tip'], tt = j && j['thumb-tip'];
-    if (!ti || !tt || !ti.visible) { h.tip.visible = false; h.pinching = false; continue; }
+    if (!ti || !tt || !ti.visible) { h.tip.visible = false; h.pinching = false; h.slot.value.set(9, 9, 9); continue; }
     const a = ti.getWorldPosition(new THREE.Vector3()), b = tt.getWorldPosition(new THREE.Vector3());
+    const palm = j['middle-finger-metacarpal'];
+    h.slot.value.copy(palm && palm.visible ? palm.getWorldPosition(new THREE.Vector3()).lerp(a, 0.5) : a);
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
     if (!h.pinching && d < 0.02) {
@@ -380,6 +435,12 @@ renderer.domElement.addEventListener('pointerdown', e => {
   else if (breath) breatheStart();
 });
 addEventListener('pointerup', () => { if (holding) breatheEnd(); });
+// Desktop: the mouse brushes the grass
+const grassPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(GRASS_Y + 0.02));
+renderer.domElement.addEventListener('pointermove', e => {
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
+  ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
+});
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- Loop ----------
@@ -388,6 +449,7 @@ const backOut = k => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
 showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  grassU.uTime.value = t;
   updateHands();
   updateBreath(dt);
   for (const m of pops) {
