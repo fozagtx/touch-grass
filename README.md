@@ -12,9 +12,6 @@ A bedtime pop-up storybook that opens on your tray table in VR. Pinch the glowin
 - **Play on Meta Quest:** https://fozagtx.github.io/touch-grass/ (open it in the Quest Browser, tap **Enter VR**, put the controllers down)
 - **Desktop preview:** the same link works in Chrome. Move the mouse over the grass to brush it and click to interact. The "VR NOT SUPPORTED" button is expected on a computer without a headset.
 
-## Division
-New Experience. Built entirely during the competition window, so the Adapted / Significantly Updated summary does not apply.
-
 ## The story (original)
 1. **Hush Hill.** Pip's moon is missing. *Pinch Pip to say hello.*
 2. **Whisper Wood.** Old Owl says to ask the river. *Pinch Owl and hear a hoot.*
