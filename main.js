@@ -17,6 +17,8 @@ const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 5
 camera.position.set(0, -0.07, -0.08);          // desktop preview only; VR uses the headset pose
 camera.lookAt(0, -0.27, -0.45);
 scene.add(camera);
+scene.add(new THREE.HemisphereLight(0x9fb0ff, 0x1a2a1a, 2.2));
+const moonLight = new THREE.DirectionalLight(0xdfe6ff, 1.6); moonLight.position.set(-1, 2, -1); scene.add(moonLight);
 
 function tex(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -109,6 +111,94 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
   blade.setAttribute('aTint', new THREE.InstancedBufferAttribute(tint, 1));
   blade.setAttribute('aBend', new THREE.InstancedBufferAttribute(bend, 1));
   grass.frustumCulled = false; scene.add(grass);
+}
+
+// ---------- The wider world: 3D trees, a moonlit pond, clouds, fireflies ----------
+const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
+{
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 64), new THREE.MeshStandardMaterial({ color: 0x173220, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(0, GRASS_Y - 0.003, -0.45); scene.add(ground);
+
+  // Procedural branching trees (recursive, like an L-system)
+  const barkMat = new THREE.MeshStandardMaterial({ color: 0x4a3226, roughness: 1 });
+  const leafMats = [0x2f6b45, 0x3a7a4c, 0x285c3d].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true }));
+  const cyl = new THREE.CylinderGeometry(0.7, 1, 1, 6); cyl.translate(0, 0.5, 0);
+  const leafGeo = new THREE.IcosahedronGeometry(1, 0);
+  const upV = new THREE.Vector3(0, 1, 0);
+  function branch(parent, start, dir, len, rad, depth, rnd) {
+    const m = new THREE.Mesh(cyl, barkMat);
+    m.position.copy(start); m.scale.set(rad, len, rad);
+    m.quaternion.setFromUnitVectors(upV, dir); parent.add(m);
+    const end = start.clone().addScaledVector(dir, len);
+    if (depth === 0) {
+      const l = new THREE.Mesh(leafGeo, leafMats[Math.floor(rnd() * 3)]);
+      l.position.copy(end); l.scale.setScalar(len * (1.4 + rnd())); l.rotation.set(rnd() * 3, rnd() * 3, 0); parent.add(l); return;
+    }
+    const kids = depth > 3 ? 2 : 3;
+    for (let k = 0; k < kids; k++) {
+      const a = (k / kids) * Math.PI * 2 + rnd() * 1.2, tilt = 0.35 + rnd() * 0.45;
+      const d = dir.clone().applyAxisAngle(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), tilt).lerp(upV, 0.15).normalize();
+      branch(parent, end, d, len * (0.68 + rnd() * 0.12), rad * 0.65, depth - 1, rnd);
+    }
+  }
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const Q = new URLSearchParams(location.search);
+  if (!Q.has('notrees')) [[-1.1, -1.6, 1.0], [1.2, -1.8, 1.2], [-1.9, -0.6, 0.9], [1.9, -0.4, 0.85], [0.2, -2.6, 1.3], [-0.9, -2.8, 1.1]].forEach(([x, z, s]) => {
+    const t = new THREE.Group(); branch(t, new THREE.Vector3(), upV.clone(), 0.32 * s, 0.035 * s, 5, rnd);
+    t.position.set(x, GRASS_Y, z); t.rotation.y = rnd() * 6; scene.add(t);
+  });
+
+  // Moonlit pond with animated ripples
+  world.pondMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: grassU.uTime }, transparent: true,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform float uTime; varying vec2 vUv;
+      void main(){
+        vec2 p = vUv - 0.5; float d = length(p);
+        float ring = sin(d * 70.0 - uTime * 1.6) * 0.5 + 0.5;
+        float ring2 = sin(length(p - vec2(0.15, -0.1)) * 90.0 - uTime * 2.1) * 0.5 + 0.5;
+        vec3 deep = vec3(0.03, 0.07, 0.18), lit = vec3(0.16, 0.28, 0.5);
+        vec3 c = mix(deep, lit, ring * ring2 * 0.5 + 0.15);
+        float glint = smoothstep(0.09, 0.0, length(p - vec2(-0.08, 0.12))) * (0.7 + 0.3 * sin(uTime * 3.0 + d * 40.0));
+        c += vec3(1.0, 0.95, 0.75) * glint;
+        float edge = smoothstep(0.5, 0.46, d);
+        gl_FragColor = vec4(c, edge);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(0.42, 48), world.pondMat);
+  pond.rotation.x = -Math.PI / 2; pond.position.set(-0.95, GRASS_Y + 0.001, -0.75); scene.add(pond);
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6a6f78, roughness: 1, flatShading: true });
+  for (let i = 0; i < 14; i++) {
+    const a = i / 14 * Math.PI * 2, st = new THREE.Mesh(new THREE.DodecahedronGeometry(0.03 + rnd() * 0.03, 0), stoneMat);
+    st.position.set(-0.95 + Math.cos(a) * 0.43, GRASS_Y + 0.01, -0.75 + Math.sin(a) * 0.43); st.rotation.set(rnd() * 3, rnd() * 3, 0); scene.add(st);
+  }
+
+  // Soft drifting clouds
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xc9c6e8, transparent: true, opacity: 0.55, depthWrite: false });
+  for (let c = 0; c < (Q.has('noclouds') ? 0 : 7); c++) {
+    const g = new THREE.Group();
+    for (let k = 0; k < 6; k++) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.25 + rnd() * 0.25, 16, 12), cloudMat); s.position.set((k - 2.5) * 0.28, rnd() * 0.15, rnd() * 0.2); s.scale.y = 0.6; g.add(s); }
+    g.position.set(-4 + c * 1.4, 1.6 + rnd() * 1.2, -4.5 - rnd() * 2); scene.add(g); world.clouds.push(g);
+  }
+
+  // Fireflies
+  const N = 70, ffPos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const a = rnd() * Math.PI * 2, r = 0.35 + rnd() * 1.4;
+    world.ffBase.push([Math.cos(a) * r, GRASS_Y + 0.05 + rnd() * 0.5, -0.45 + Math.sin(a) * r, rnd() * 10]);
+  }
+  const ffGeo = new THREE.BufferGeometry(); ffGeo.setAttribute('position', new THREE.BufferAttribute(ffPos, 3));
+  const ffTex = tex(64, 64, (x, w) => { const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,240,150,1)'); g.addColorStop(0.3, 'rgba(220,255,120,.6)'); g.addColorStop(1, 'rgba(200,255,100,0)'); x.fillStyle = g; x.fillRect(0, 0, w, w); });
+  world.fireflies = new THREE.Points(ffGeo, new THREE.PointsMaterial({ size: 0.035, map: ffTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  scene.add(world.fireflies);
+}
+function updateWorld(t, dt) {
+  const p = world.fireflies.geometry.attributes.position;
+  world.ffBase.forEach(([x, y, z, ph], i) => p.setXYZ(i, x + Math.sin(t * 0.4 + ph) * 0.08, y + Math.sin(t * 0.9 + ph * 2) * 0.05, z + Math.cos(t * 0.35 + ph) * 0.08));
+  p.needsUpdate = true;
+  world.fireflies.material.opacity = 0.75 + 0.25 * Math.sin(t * 2);
+  world.clouds.forEach(c => { c.position.x += dt * 0.05; if (c.position.x > 6) c.position.x = -6; });
 }
 
 // ---------- The book ----------
@@ -471,6 +561,7 @@ showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   grassU.uTime.value = t;
+  updateWorld(t, dt);
   updateHands();
   updateBreath(dt);
   for (const m of pops) {
