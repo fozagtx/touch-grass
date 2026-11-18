@@ -172,7 +172,7 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
 }
 
 // ---------- The wider world: 3D trees, a moonlit pond, clouds, fireflies ----------
-const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: null, trees: [], leaves: [], rip: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -99, 0)), ripI: 0 };
+const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: null, trees: [], leaves: [], rip: Array.from({ length: 14 }, () => new THREE.Vector4(0, 0, -99, 0)), ripI: 0 };
 {
   const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 64), new THREE.MeshStandardMaterial({ color: 0x173220, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(0, GRASS_Y - 0.003, -0.45); scene.add(ground);
@@ -203,14 +203,14 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: nu
   const Q = new URLSearchParams(location.search);
   if (!Q.has('notrees')) [[-1.1, -1.6, 1.0], [1.2, -1.8, 1.2], [-1.9, -0.6, 0.9], [1.9, -0.4, 0.85], [0.2, -2.6, 1.3], [-0.9, -2.8, 1.1]].forEach(([x, z, s]) => {
     const t = new THREE.Group(); branch(t, new THREE.Vector3(), upV.clone(), 0.32 * s, 0.035 * s, 5, rnd);
-    t.position.set(x, GRASS_Y, z); t.rotation.y = rnd() * 6; scene.add(t); world.trees.push(t);
+    t.rotation.y = rnd() * 6; const pv = new THREE.Group(); pv.position.set(x, GRASS_Y, z); pv.add(t); scene.add(pv); pv.userData = { bx: 0, bz: 0, vx: 0, vz: 0, shake: 0 }; world.trees.push(pv);
   });
 
   // Moonlit pond with animated ripples
   world.pondMat = new THREE.ShaderMaterial({
     uniforms: { uTime: grassU.uTime, uRip: { value: world.rip } }, transparent: true,
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform float uTime; uniform vec4 uRip[6]; varying vec2 vUv;
+    fragmentShader: `uniform float uTime; uniform vec4 uRip[14]; varying vec2 vUv;
       void main(){
         vec2 p = vUv - 0.5; float d = length(p);
         float ring = sin(d * 70.0 - uTime * 1.6) * 0.5 + 0.5;
@@ -219,7 +219,7 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: nu
         vec3 c = mix(deep, lit, ring * ring2 * 0.5 + 0.15);
         float glint = smoothstep(0.09, 0.0, length(p - vec2(-0.08, 0.12))) * (0.7 + 0.3 * sin(uTime * 3.0 + d * 40.0));
         c += vec3(1.0, 0.95, 0.75) * glint;
-        for (int i = 0; i < 6; i++) {                       // touch ripples: expanding rings from where you touched
+        for (int i = 0; i < 14; i++) {                       // touch ripples: expanding rings from where you touched
           float age = uTime - uRip[i].z; if (age < 0.0 || age > 3.5) continue;
           float dd = length(vUv - uRip[i].xy), front = age * 0.16;
           float band = exp(-pow((dd - front) * 40.0, 2.0));
@@ -227,7 +227,7 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: nu
           c += vec3(0.55, 0.65, 0.9) * max(0.0, w) * 0.9;
         }
         float edge = smoothstep(0.5, 0.46, d);
-        gl_FragColor = vec4(c, edge);
+        gl_FragColor = vec4(c, edge * 0.72);
         #include <colorspace_fragment>
       }`,
   });
@@ -323,6 +323,74 @@ function shakeTree(tree) {
     scene.add(l); world.leaves.push(l);
   }
 }
+// Koi under the pond surface: wander, stay in the pond, flee from stirring
+world.fish = []; world.stir = { x: 9, y: 9, t: -9 };
+{
+  const koiCols = [[0xff7a2e, 0xffffff], [0xffffff, 0xff5a2a], [0xffb02e, 0x222222], [0xff7a2e, 0xff7a2e], [0xf2f2f2, 0xffa040], [0xff6a3a, 0xffffff], [0xffc04a, 0xffffff]];
+  koiCols.forEach(([body, patch], i) => {
+    const f = new THREE.Group();
+    const b = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), new THREE.MeshBasicMaterial({ color: body })); b.scale.set(0.034, 0.006, 0.012); f.add(b);
+    const sp = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: patch })); sp.scale.set(0.012, 0.0062, 0.008); sp.position.x = 0.006; f.add(sp);
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.022, 3), new THREE.MeshBasicMaterial({ color: body })); tail.rotation.z = Math.PI / 2; tail.scale.z = 0.25; tail.position.x = -0.042; f.add(tail); f.userData.tail = tail;
+    const a = i / koiCols.length * 6.28, r = 0.12 + (i % 3) * 0.07;
+    f.userData.p = new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r); f.userData.h = a + 1.57; f.userData.sp = 0.05 + Math.random() * 0.03; f.userData.ph = Math.random() * 6;
+    scene.add(f); world.fish.push(f);
+  });
+}
+const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+function updateFish(t, dt) {
+  if (!world.pond) return;
+  const c = world.pond.position, st = world.stir, stirAge = t - st.t;
+  for (const f of world.fish) {
+    const u = f.userData, p = u.p;
+    u.h += Math.sin(t * 0.7 + u.ph) * 0.6 * dt;                       // gentle wander
+    const r = p.length(); if (r > 0.28) u.h += Math.sign(wrapA(Math.atan2(-p.y, -p.x) - u.h)) * 2.8 * dt;   // stay inside the pond
+    let speed = u.sp;
+    if (stirAge < 1.2) { const dx = p.x - st.x, dy = p.y - st.y, dd = Math.hypot(dx, dy); if (dd < 0.16) { const away = Math.atan2(dy, dx); u.h += wrapA(away - u.h) * 6 * dt; speed = 0.22; } }
+    p.x += Math.cos(u.h) * speed * dt; p.y += Math.sin(u.h) * speed * dt;
+    f.position.set(c.x + p.x, GRASS_Y - 0.0015, c.z + p.y);
+    f.rotation.y = -u.h; u.tail.rotation.y = Math.sin(t * (speed > 0.1 ? 22 : 9) + u.ph) * 0.5;
+  }
+}
+// Stirring: trailing ripples + a swish that follows hand speed
+let swish = null;
+function stirAt(uv, speed) {
+  ripple(uv, Math.min(1, 0.35 + speed * 4));
+  world.stir.x = (uv.x - 0.5) * 0.84; world.stir.y = -(uv.y - 0.5) * 0.84; world.stir.t = grassU.uTime.value;
+  actx ??= new AudioContext(); startPondAmbience();
+  if (!swish) {
+    const len = actx.sampleRate * 2, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    let l = 0; for (let i = 0; i < len; i++) { l = l * 0.9 + (Math.random() * 2 - 1) * 0.1; d[i] = l * 4; }
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 0.7;
+    const g = actx.createGain(); g.gain.value = 0; src.connect(f).connect(g); g.connect(actx.destination); g.connect(getReverb()); src.start();
+    swish = { g, f };
+  }
+  const now = actx.currentTime;
+  swish.g.gain.cancelScheduledValues(now); swish.g.gain.setTargetAtTime(Math.min(0.12, 0.02 + speed * 0.6), now, 0.03); swish.g.gain.setTargetAtTime(0, now + 0.12, 0.25);
+  swish.f.frequency.setTargetAtTime(600 + speed * 4000, now, 0.05);
+  if (Math.random() < 0.25) bubble(now, 700 + Math.random() * 1500, 0.04, 0.04);
+}
+// Slingshot trees
+function whoosh() {
+  const len = actx.sampleRate * 0.5, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / len);
+  const src = actx.createBufferSource(); src.buffer = buf; const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.2;
+  f.frequency.setValueAtTime(400, actx.currentTime); f.frequency.exponentialRampToValueAtTime(2400, actx.currentTime + 0.25);
+  const g = actx.createGain(); g.gain.value = 0.3; src.connect(f).connect(g).connect(actx.destination); src.start();
+}
+function releaseTree(tr) {
+  const u = tr.userData, power = Math.hypot(u.bx, u.bz);
+  u.grab = null; actx ??= new AudioContext(); whoosh(); rustle();
+  const box = new THREE.Box3().setFromObject(tr);
+  for (let i = 0; i < Math.round(10 + power * 60); i++) {
+    const l = new THREE.Mesh(leafGeoF, leafMatF[i % 3]);
+    l.position.set(box.min.x + Math.random() * (box.max.x - box.min.x), box.max.y - Math.random() * 0.3, box.min.z + Math.random() * (box.max.z - box.min.z));
+    l.userData = { vy: 0.05 + Math.random() * 0.2 * power * 4, vx: u.bz * 3 * (0.5 + Math.random()), vz: -u.bx * 3 * (0.5 + Math.random()), g: true, ph: Math.random() * 6, spin: (Math.random() - 0.5) * 10 };
+    scene.add(l); world.leaves.push(l);
+  }
+}
+function treeFrom(obj) { let o = obj; while (o && !world.trees.includes(o)) o = o.parent; return o; }
 function touchWorld(origin, dir) {
   const r = new THREE.Raycaster(origin, dir.clone().normalize(), 0, 8);
   const hits = r.intersectObjects([world.pond, ...world.trees], true);
@@ -335,9 +403,16 @@ function touchWorld(origin, dir) {
 }
 
 function updateWorld(t, dt) {
-  world.trees.forEach(tr => { const k = tr.userData.shake || 0; if (k > 0) { tr.userData.shake = Math.max(0, k - dt * 1.2); tr.rotation.z = Math.sin(t * 22) * 0.035 * k; tr.rotation.x = Math.cos(t * 17) * 0.02 * k; } });
+  world.trees.forEach(tr => {
+    const u = tr.userData;
+    if (u.grab) { u.bz += (u.grab.tz - u.bz) * Math.min(1, dt * 12); u.bx += (u.grab.tx - u.bx) * Math.min(1, dt * 12); u.vx = u.vz = 0; }
+    else { u.vz += (-70 * u.bz - 3.2 * u.vz) * dt; u.vx += (-70 * u.bx - 3.2 * u.vx) * dt; u.bz += u.vz * dt; u.bx += u.vx * dt; }   // spring back, wobble
+    const k = u.shake || 0; if (k > 0) u.shake = Math.max(0, k - dt * 1.2);
+    tr.rotation.z = u.bz + Math.sin(t * 22) * 0.035 * k; tr.rotation.x = u.bx + Math.cos(t * 17) * 0.02 * k;
+  });
+  updateFish(t, dt);
   world.leaves = world.leaves.filter(l => {
-    const u = l.userData; l.position.y += u.vy * dt; l.position.x += Math.sin(t * 2 + u.ph) * dt * 0.06; l.rotation.x += u.spin * dt; l.rotation.z += u.spin * 0.5 * dt;
+    const u = l.userData; if (u.g) { u.vy -= 0.35 * dt; u.vx *= 0.985; u.vz *= 0.985; l.position.x += u.vx * dt; l.position.z += u.vz * dt; u.vy = Math.max(u.vy, -0.15); } l.position.y += u.vy * dt; l.position.x += Math.sin(t * 2 + u.ph) * dt * 0.06; l.rotation.x += u.spin * dt; l.rotation.z += u.spin * 0.5 * dt;
     if (l.position.y < GRASS_Y + 0.005) { scene.remove(l); return false; } return true;
   });
   const p = world.fireflies.geometry.attributes.position;
@@ -809,7 +884,7 @@ const hands = [0, 1].map(i => {
   tip.visible = false; scene.add(tip);
   return { hand, tip, pinching: false };
 });
-let penOwner = null; const t0 = () => grassU.uTime.value;
+let penOwner = null; const t0 = () => grassU.uTime.value; let dtH = 0.016;
 function updateHands() {
   hands.forEach((h, i) => (h.slot = i ? grassU.uH1 : grassU.uH0));
   for (const h of hands) {
@@ -820,7 +895,7 @@ function updateHands() {
     h.slot.value.copy(palm && palm.visible ? palm.getWorldPosition(new THREE.Vector3()).lerp(a, 0.5) : a);
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
-    if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.02 && (!h.lastRip || t0() - h.lastRip > 0.25)) { h.lastRip = t0(); ripple(new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5), 0.8); plop(0.6); startPondAmbience(); } }
+    if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.03) { const uv = new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5); const sp = h.lastWet ? a.distanceTo(h.lastWet) / Math.max(dtH, 1e-3) : 0; if (!h.inWater) { plop(0.7); h.inWater = true; } if (!h.lastRip || t0() - h.lastRip > 0.06) { h.lastRip = t0(); stirAt(uv, sp * 0.3); } h.lastWet = a.clone(); } else { h.inWater = false; h.lastWet = null; } }
     const cp = !h.pinching && pageCanvasPoint(a);
     if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
     else if (penOwner === h) { pen.visible = false; penOwner = null; }
@@ -829,9 +904,16 @@ function updateHands() {
       if (hit) activate(hit);
       else {
         const eye = renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
-        if (!touchWorld(eye, p.clone().sub(eye)) && breath) { h.breathing = true; breatheStart(); }
+        const rc = new THREE.Raycaster(eye, p.clone().sub(eye).normalize(), 0, 8);
+        const th = rc.intersectObjects(world.trees, true)[0], tree = th && treeFrom(th.object);
+        if (tree) { tree.userData.grab = { tx: 0, tz: 0 }; h.tree = tree; h.grabStart = p.clone(); }
+        else if (!touchWorld(eye, p.clone().sub(eye)) && breath) { h.breathing = true; breatheStart(); }
       }
-    } else if (h.pinching && d > 0.035) { h.pinching = false; if (h.breathing) { h.breathing = false; breatheEnd(); } }
+    } else if (h.pinching && d > 0.035) {
+      h.pinching = false; if (h.breathing) { h.breathing = false; breatheEnd(); }
+      if (h.tree) { const moved = p.distanceTo(h.grabStart); if (moved < 0.02) { h.tree.userData.grab = null; shakeTree(h.tree); } else releaseTree(h.tree); h.tree = null; }
+    }
+    if (h.tree && h.pinching) { const dlt = p.clone().sub(h.grabStart); const g = h.tree.userData.grab; g.tz = Math.max(-0.5, Math.min(0.5, -dlt.x * 4)); g.tx = Math.max(-0.4, Math.min(0.4, dlt.z * 4)); }
   }
 }
 
@@ -840,17 +922,28 @@ renderer.domElement.addEventListener('pointerdown', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   if (ray.intersectObject(corner).length) return turnPage();
   const hit = ray.intersectObjects(tappables, false)[0];
-  if (hit) hit.object.userData.onPinch.call(hit.object);
-  else if (touchWorld(ray.ray.origin, ray.ray.direction)) {}
-  else if (breath) breatheStart();
+  if (hit) return hit.object.userData.onPinch.call(hit.object);
+  const th = ray.intersectObjects(world.trees, true)[0], tree = th && treeFrom(th.object);
+  if (tree) { tree.userData.grab = { x: e.clientX, y: e.clientY, tx: 0, tz: 0 }; drag.tree = tree; return; }
+  const ph = world.pond && ray.intersectObject(world.pond)[0];
+  if (ph) { drag.pond = { x: e.clientX, y: e.clientY }; ripple(ph.uv, 1); plop(1); startPondAmbience(); stirAt(ph.uv, 0.1); return; }
+  if (breath) breatheStart();
 });
-addEventListener('pointerup', () => { if (holding) breatheEnd(); });
+const drag = { tree: null, pond: null };
+addEventListener('pointerup', e => {
+  if (holding) breatheEnd();
+  if (drag.tree) { const g = drag.tree.userData.grab, moved = g && Math.hypot(e.clientX - g.x, e.clientY - g.y);
+    if (moved < 8) { drag.tree.userData.grab = null; shakeTree(drag.tree); } else releaseTree(drag.tree); drag.tree = null; }
+  drag.pond = null;
+});
 // Desktop: the mouse brushes the grass
 const grassPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(GRASS_Y + 0.02));
 renderer.domElement.addEventListener('pointermove', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
+  if (drag.tree) { const g = drag.tree.userData.grab; g.tz = Math.max(-0.5, Math.min(0.5, -(e.clientX - g.x) * 0.0022)); g.tx = Math.max(-0.4, Math.min(0.4, (e.clientY - g.y) * 0.0022)); return; }
   const ph = world.pond && ray.intersectObject(world.pond)[0];
+  if (ph && drag.pond) { const sp = Math.hypot(e.movementX || 0, e.movementY || 0) / 400; if (!world.lastStir || t0() - world.lastStir > 0.05) { world.lastStir = t0(); stirAt(ph.uv, sp); } return; }
   if (ph && (!world.lastHover || t0() - world.lastHover > 0.3)) { world.lastHover = t0(); ripple(ph.uv, 0.6); if (actx) { bubble(actx.currentTime, 1100 + Math.random() * 1200, 0.03, 0.035); startPondAmbience(); } }
   const hit = ray.intersectObject(left.m)[0];
   if (hit && !renderer.xr.isPresenting) {
@@ -872,7 +965,7 @@ renderer.setAnimationLoop(() => {
   updateWorld(t, dt);
   updateFlip(dt);
   updateSkyToys(t);
-  updateHands();
+  dtH = dt; updateHands();
   updateBreath(dt);
   for (const m of pops) {
     const u = m.userData;
