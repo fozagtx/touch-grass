@@ -5,43 +5,67 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.LinearToneMapping;
+renderer.toneMappingExposure = 1;
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local');
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] }));
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b1026);
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 50);
-camera.position.set(0, -0.06, -0.1);          // desktop preview only; VR uses the headset pose
-camera.lookAt(0, -0.29, -0.43);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 50);
+camera.position.set(0, -0.07, -0.08);          // desktop preview only; VR uses the headset pose
+camera.lookAt(0, -0.27, -0.45);
 scene.add(camera);
-const hemi = new THREE.HemisphereLight(0xbfd0ff, 0x221a33, 1.4); scene.add(hemi);
-const lamp = new THREE.PointLight(0xffd59a, 1.2, 2); lamp.position.set(0.2, 0.1, -0.3); scene.add(lamp);
 
-// Bedroom sky dots
-{
-  const g = new THREE.BufferGeometry(), p = [];
-  for (let i = 0; i < 800; i++) { const v = new THREE.Vector3().randomDirection().multiplyScalar(8); if (v.y > -1) p.push(v.x, v.y, v.z); }
-  g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x8899cc, size: 0.03 })));
+function tex(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 
-// ---------- The book (on the tray table, seated reach) ----------
+// Night sky dome: indigo gradient, soft stars
+{
+  const t = tex(1024, 512, (x, w, h) => {
+    const g = x.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#05071a'); g.addColorStop(0.45, '#16184a'); g.addColorStop(0.58, '#3a2f6b'); g.addColorStop(0.7, '#120f2e'); g.addColorStop(1, '#07060f');
+    x.fillStyle = g; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 700; i++) {
+      const y = Math.random() * h * 0.55, r = Math.random() * 1.4 + 0.3;
+      x.fillStyle = `rgba(255,248,230,${0.3 + Math.random() * 0.7})`; x.beginPath(); x.arc(Math.random() * w, y, r, 0, 7); x.fill();
+    }
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 48, 24), new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide })));
+}
+
+// ---------- The book ----------
 const BOOK = new THREE.Group(); BOOK.position.set(0, -0.32, -0.45); scene.add(BOOK);
 const PW = 0.2, PD = 0.26;
-const cover = new THREE.Mesh(new THREE.BoxGeometry(PW * 2 + 0.02, 0.01, PD + 0.02), new THREE.MeshStandardMaterial({ color: 0x5b2a4a }));
-cover.position.y = -0.006; BOOK.add(cover);
+// warm bedside-lamp glow under the book
+const glow = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.7), new THREE.MeshBasicMaterial({
+  transparent: true, depthWrite: false, map: tex(256, 256, (x, w, h) => {
+    const g = x.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    g.addColorStop(0, 'rgba(255,190,120,.55)'); g.addColorStop(1, 'rgba(255,190,120,0)'); x.fillStyle = g; x.fillRect(0, 0, w, h);
+  }),
+}));
+glow.rotation.x = -Math.PI / 2; glow.position.y = -0.012; BOOK.add(glow);
+const coverMat = new THREE.MeshBasicMaterial({ color: 0x6a2c4f });
+const cover = new THREE.Mesh(new THREE.BoxGeometry(PW * 2 + 0.024, 0.008, PD + 0.024), coverMat); cover.position.y = -0.006; BOOK.add(cover);
+const block = new THREE.Mesh(new THREE.BoxGeometry(PW * 2, 0.006, PD), new THREE.MeshBasicMaterial({ color: 0xe9dcc0 })); block.position.y = -0.002; BOOK.add(block);
 
-function canvasPage(x) {
+function pageMesh(x, spineLeft) {
   const c = document.createElement('canvas'); c.width = 800; c.height = 1040;
-  const tex = new THREE.CanvasTexture(c);
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD), new THREE.MeshBasicMaterial({ map: tex }));
-  m.rotation.x = -Math.PI / 2; m.position.set(x, 0.001, 0); BOOK.add(m);
-  return { c, ctx: c.getContext('2d'), tex };
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD), new THREE.MeshBasicMaterial({ map: t }));
+  m.rotation.x = -Math.PI / 2; m.position.set(x, 0.0012, 0); BOOK.add(m);
+  return { c, ctx: c.getContext('2d'), t, spineLeft };
 }
-const left = canvasPage(-PW / 2), right = canvasPage(PW / 2);
-function paper(p) { p.ctx.fillStyle = '#f6ecd6'; p.ctx.fillRect(0, 0, 800, 1040); }
+const left = pageMesh(-PW / 2, false), right = pageMesh(PW / 2, true);
+function paper(p) {
+  const x = p.ctx; x.fillStyle = '#f7eedb'; x.fillRect(0, 0, 800, 1040);
+  const g = x.createLinearGradient(p.spineLeft ? 0 : 800, 0, p.spineLeft ? 120 : 680, 0);
+  g.addColorStop(0, 'rgba(120,90,60,.28)'); g.addColorStop(1, 'rgba(120,90,60,0)'); x.fillStyle = g; x.fillRect(0, 0, 800, 1040);
+}
 function wrap(ctx, text, x, y, w, lh) {
   for (const para of text.split('\n')) {
     let line = '';
@@ -49,47 +73,134 @@ function wrap(ctx, text, x, y, w, lh) {
       const t = line ? line + ' ' + word : word;
       if (ctx.measureText(t).width > w) { ctx.fillText(line, x, y); y += lh; line = word; } else line = t;
     }
-    ctx.fillText(line, x, y); y += lh * 1.4;
+    ctx.fillText(line, x, y); y += lh * 1.35;
   }
 }
-function drawPages(n, total, text, hint) {
+function drawPages(n, total, heading, text, hint) {
   paper(left); const L = left.ctx;
-  L.fillStyle = '#3a2a3f'; L.font = 'italic 50px Georgia, serif'; wrap(L, text, 60, 130, 680, 70);
-  L.fillStyle = '#9a7a8a'; L.font = '30px Georgia, serif'; L.fillText(`${n} / ${total}`, 360, 990);
-  left.tex.needsUpdate = true;
+  L.fillStyle = '#a0526e'; L.font = '600 34px Georgia, serif'; L.fillText(heading.toUpperCase(), 70, 110);
+  L.fillStyle = '#d9b46a'; L.fillRect(70, 130, 90, 4);
+  L.fillStyle = '#33223a'; L.font = '46px Georgia, serif'; wrap(L, text, 70, 220, 660, 66);
+  L.fillStyle = '#a08a7a'; L.font = 'italic 30px Georgia, serif'; L.textAlign = 'center'; L.fillText(`~ ${n} ~`, 400, 985); L.textAlign = 'left';
+  left.t.needsUpdate = true;
   paper(right); const R = right.ctx;
-  R.fillStyle = '#5a3a4a'; R.font = 'italic 38px Georgia, serif'; wrap(R, hint, 60, 860, 680, 48);
-  right.tex.needsUpdate = true;
+  R.fillStyle = 'rgba(160,82,110,.12)'; R.beginPath(); R.roundRect(50, 880, 700, 110, 24); R.fill();
+  R.fillStyle = '#7a3e58'; R.font = 'italic 36px Georgia, serif'; wrap(R, '✋ ' + hint, 80, 945, 640, 44);
+  right.t.needsUpdate = true;
 }
 
-// Page corner you pinch to turn
-const corner = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffd59a }));
-corner.position.set(PW - 0.015, 0.012, PD / 2 - 0.015); BOOK.add(corner);
+// Page corner: a folded, glowing dog-ear you pinch to turn
+const corner = new THREE.Mesh(new THREE.CircleGeometry(0.014, 3), new THREE.MeshBasicMaterial({ color: 0xffc977, side: THREE.DoubleSide }));
+corner.rotation.x = -Math.PI / 2; corner.rotation.z = Math.PI / 4;
+corner.position.set(PW - 0.012, 0.004, PD / 2 - 0.012); BOOK.add(corner);
 
-// ---------- Pop-up helpers ----------
-const stage = new THREE.Group(); stage.position.set(PW / 2, 0, -0.02); BOOK.add(stage);
-const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
+// ---------- Paper cut-outs that fold up off the page ----------
+const stage = new THREE.Group(); stage.position.set(PW / 2, 0.002, 0); BOOK.add(stage);
 let pops = [], tappables = [];
-function pop(mesh, delay = 0) { mesh.userData.popT = -delay; mesh.userData.baseScale = mesh.scale.clone(); mesh.scale.setScalar(0.0001); pops.push(mesh); stage.add(mesh); return mesh; }
-function tappable(mesh, fn) { mesh.userData.onPinch = fn; tappables.push(mesh); return mesh; }
+const EDGE = '#fffaf0';
+function cutout(w, h, draw, { flat = false } = {}) {
+  const px = 512, ph = Math.round(px * h / w);
+  const c = document.createElement('canvas'); c.width = px; c.height = ph;
+  const ctx = c.getContext('2d');
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  const redraw = (...a) => { ctx.clearRect(0, 0, px, ph); draw(ctx, px, ph, ...a); t.needsUpdate = true; };
+  redraw();
+  const g = new THREE.PlaneGeometry(w, h); g.translate(0, h / 2, 0);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: t, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide }));
+  m.userData.redraw = redraw; m.userData.flat = flat;
+  return m;
+}
+// paper-cut fill: thick cream edge, then colour, then a soft inner shade
+function cut(ctx, path, fill, shade = 'rgba(0,0,0,.12)') {
+  ctx.save(); ctx.lineJoin = 'round';
+  ctx.beginPath(); path(); ctx.lineWidth = 16; ctx.strokeStyle = EDGE; ctx.stroke();
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.clip(); ctx.lineWidth = 18; ctx.strokeStyle = shade; ctx.stroke();
+  ctx.restore();
+}
+function place(m, x, z, delay = 0) {
+  m.position.set(x, 0, z);
+  m.userData.popT = -delay; m.userData.baseY = 0;
+  m.rotation.x = -Math.PI / 2;
+  pops.push(m); stage.add(m); return m;
+}
+function tappable(m, fn) { m.userData.onPinch = fn; tappables.push(m); return m; }
 function hop(m) { m.userData.hop = 1; }
 
-function fox(x, z, curled = false) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.018, 16, 12), mat(0xe07b39)); body.scale.set(1.3, curled ? 0.7 : 1, 1); body.position.y = 0.018; g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), mat(0xe8894a)); head.position.set(curled ? 0.016 : 0.02, curled ? 0.02 : 0.034, 0); g.add(head);
-  for (const s of [-1, 1]) { const ear = new THREE.Mesh(new THREE.ConeGeometry(0.004, 0.01, 8), mat(0x6b3a1e)); ear.position.set(head.position.x, head.position.y + 0.012, s * 0.005); g.add(ear); }
-  const tail = new THREE.Mesh(new THREE.SphereGeometry(0.01, 12, 8), mat(0xfff1dc)); tail.scale.set(1.6, 0.8, 0.8); tail.position.set(-0.026, 0.02, 0); g.add(tail);
-  g.position.set(x, 0, z); return g;
-}
-function hill(x, z, r, c) { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat(c)); m.position.set(x, 0, z); return m; }
-function tree(x, z, h) {
-  const g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.004, h * 0.4, 8), mat(0x5a3a2a)); trunk.position.y = h * 0.2; g.add(trunk);
-  const top = new THREE.Mesh(new THREE.ConeGeometry(h * 0.28, h * 0.75, 10), mat(0x2f6b4f)); top.position.y = h * 0.7; g.add(top);
-  g.position.set(x, 0, z); return g;
-}
-const sky = new THREE.Group(); stage.add(sky); // moon & cloud live above the book
+// ---------- Illustrations ----------
+const D = {
+  hills(c1, c2) {
+    return (x, w, h) => {
+      cut(x, () => { x.moveTo(8, h - 8); x.bezierCurveTo(w * .2, h * .15, w * .45, h * .2, w * .6, h * .5); x.bezierCurveTo(w * .75, h * .3, w * .9, h * .35, w - 8, h * .6); x.lineTo(w - 8, h - 8); x.closePath(); }, c1);
+      cut(x, () => { x.moveTo(8, h - 8); x.bezierCurveTo(w * .25, h * .55, w * .5, h * .5, w * .7, h * .75); x.quadraticCurveTo(w * .85, h * .6, w - 8, h * .8); x.lineTo(w - 8, h - 8); x.closePath(); }, c2);
+    };
+  },
+  house(x, w, h) {
+    cut(x, () => { x.rect(w * .62, h * .12, w * .1, h * .25); }, '#7a4b3a');
+    cut(x, () => { x.moveTo(w * .1, h * .5); x.lineTo(w * .5, h * .12); x.lineTo(w * .9, h * .5); x.closePath(); }, '#c4574a');
+    cut(x, () => { x.rect(w * .18, h * .48, w * .64, h * .48); }, '#efd9b4');
+    x.fillStyle = '#ffcf5a'; x.shadowColor = '#ffcf5a'; x.shadowBlur = 30; x.fillRect(w * .28, h * .58, w * .18, h * .16); x.shadowBlur = 0;
+    x.fillStyle = '#8a5a44'; x.fillRect(w * .56, h * .64, w * .16, h * .32);
+  },
+  fox(curled) {
+    return (x, w, h) => {
+      if (curled) {
+        cut(x, () => { x.ellipse(w * .5, h * .68, w * .4, h * .26, 0, 0, 7); }, '#e2763a');
+        cut(x, () => { x.ellipse(w * .78, h * .72, w * .16, h * .14, 0, 0, 7); }, '#fff3e2');
+        x.strokeStyle = '#3b2230'; x.lineWidth = 6; x.beginPath(); x.arc(w * .34, h * .62, 12, 0.2, Math.PI - 0.2); x.stroke();
+        x.font = `${h * .22}px Georgia`; x.fillStyle = '#fff3c4'; x.fillText('z', w * .12, h * .3); x.fillText('z', w * .22, h * .16);
+        return;
+      }
+      cut(x, () => { x.moveTo(w * .08, h * .7); x.quadraticCurveTo(w * .02, h * .25, w * .3, h * .55); x.lineTo(w * .35, h * .75); x.closePath(); }, '#e2763a');
+      cut(x, () => { x.ellipse(w * .45, h * .72, w * .24, h * .22, 0, 0, 7); }, '#e2763a');
+      cut(x, () => { x.moveTo(w * .55, h * .4); x.lineTo(w * .62, h * .08); x.lineTo(w * .72, h * .32); x.lineTo(w * .82, h * .08); x.lineTo(w * .9, h * .42); x.quadraticCurveTo(w * .96, h * .62, w * .72, h * .66); x.quadraticCurveTo(w * .5, h * .62, w * .55, h * .4); x.closePath(); }, '#ef8a4a');
+      cut(x, () => { x.ellipse(w * .74, h * .58, w * .1, h * .07, 0, 0, 7); }, '#fff3e2', 'rgba(0,0,0,0)');
+      cut(x, () => { x.arc(w * .08, h * .32, w * .06, 0, 7); }, '#fff3e2', 'rgba(0,0,0,0)');
+      x.fillStyle = '#2b1a24'; x.beginPath(); x.arc(w * .68, h * .44, 7, 0, 7); x.arc(w * .82, h * .44, 7, 0, 7); x.fill();
+      x.beginPath(); x.arc(w * .76, h * .56, 6, 0, 7); x.fill();
+      x.fillStyle = 'rgba(255,120,140,.5)'; x.beginPath(); x.arc(w * .64, h * .54, 9, 0, 7); x.arc(w * .87, h * .54, 9, 0, 7); x.fill();
+    };
+  },
+  tree(c) {
+    return (x, w, h) => {
+      cut(x, () => x.rect(w * .44, h * .7, w * .12, h * .28), '#6a4434');
+      [[.75, .45], [.55, .38], [.35, .3]].forEach(([y, r]) => cut(x, () => { x.moveTo(w * (.5 - r), h * y); x.lineTo(w * .5, h * (y - .4)); x.lineTo(w * (.5 + r), h * y); x.closePath(); }, c));
+    };
+  },
+  owl(x, w, h) {
+    cut(x, () => { x.moveTo(w * .2, h * .3); x.lineTo(w * .25, h * .05); x.lineTo(w * .4, h * .2); x.lineTo(w * .6, h * .2); x.lineTo(w * .75, h * .05); x.lineTo(w * .8, h * .3); x.quadraticCurveTo(w * .95, h * .9, w * .5, h * .95); x.quadraticCurveTo(w * .05, h * .9, w * .2, h * .3); x.closePath(); }, '#9a6e4c');
+    cut(x, () => x.ellipse(w * .5, h * .7, w * .2, h * .2, 0, 0, 7), '#e9cfa6', 'rgba(0,0,0,0)');
+    for (const s of [.36, .64]) { cut(x, () => x.arc(w * s, h * .38, w * .13, 0, 7), '#ffe08a', 'rgba(0,0,0,0)'); x.fillStyle = '#2b1a24'; x.beginPath(); x.arc(w * s, h * .4, w * .05, 0, 7); x.fill(); }
+    cut(x, () => { x.moveTo(w * .46, h * .5); x.lineTo(w * .54, h * .5); x.lineTo(w * .5, h * .6); x.closePath(); }, '#e0a040', 'rgba(0,0,0,0)');
+  },
+  star(awake) {
+    return (x, w, h) => {
+      if (awake) { x.shadowColor = '#ffe27a'; x.shadowBlur = 40; }
+      cut(x, () => { for (let i = 0; i < 10; i++) { const r = i % 2 ? w * .2 : w * .44, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(w / 2 + Math.cos(a) * r, h * .52 + Math.sin(a) * r); } x.closePath(); }, awake ? '#ffe27a' : '#6d7596');
+      x.shadowBlur = 0;
+      x.fillStyle = '#2b1a24';
+      if (awake) { x.beginPath(); x.arc(w * .42, h * .5, 6, 0, 7); x.arc(w * .58, h * .5, 6, 0, 7); x.fill(); x.lineWidth = 5; x.strokeStyle = '#2b1a24'; x.beginPath(); x.arc(w / 2, h * .56, 12, 0.3, Math.PI - 0.3); x.stroke(); }
+      else { x.lineWidth = 5; x.strokeStyle = '#2b1a24'; x.beginPath(); x.arc(w * .42, h * .5, 8, 0.2, Math.PI - 0.2); x.stroke(); x.beginPath(); x.arc(w * .58, h * .5, 8, 0.2, Math.PI - 0.2); x.stroke(); }
+    };
+  },
+  river(x, w, h) {
+    cut(x, () => { x.moveTo(0, h * .3); x.bezierCurveTo(w * .3, h * .1, w * .6, h * .5, w, h * .25); x.lineTo(w, h * .75); x.bezierCurveTo(w * .6, h * .95, w * .3, h * .55, 0, h * .7); x.closePath(); }, '#3c64b4');
+    x.strokeStyle = 'rgba(255,255,255,.5)'; x.lineWidth = 5;
+    for (let i = 0; i < 6; i++) { x.beginPath(); const sx = 40 + i * 80, sy = h * (.4 + (i % 2) * .15); x.moveTo(sx, sy); x.quadraticCurveTo(sx + 20, sy - 10, sx + 40, sy); x.stroke(); }
+  },
+  cloud(x, w, h) {
+    cut(x, () => { x.arc(w * .3, h * .6, h * .28, 0, 7); x.moveTo(w * .55, h * .4); x.arc(w * .5, h * .42, h * .34, 0, 7); x.moveTo(w * .95, h * .6); x.arc(w * .72, h * .6, h * .27, 0, 7); x.rect(w * .3, h * .6, w * .42, h * .27); }, '#eef0fb', 'rgba(80,90,140,.18)');
+    x.strokeStyle = '#4a4a6a'; x.lineWidth = 6; x.beginPath(); x.arc(w * .42, h * .55, 12, 0.2, Math.PI - 0.2); x.stroke(); x.beginPath(); x.arc(w * .6, h * .55, 12, 0.2, Math.PI - 0.2); x.stroke();
+  },
+  moon(smile) {
+    return (x, w, h) => {
+      x.shadowColor = '#fff1b0'; x.shadowBlur = 60;
+      cut(x, () => x.arc(w / 2, h / 2, w * .36, 0, 7), '#fff2c2', 'rgba(200,170,90,.25)'); x.shadowBlur = 0;
+      x.fillStyle = 'rgba(210,180,110,.35)'; [[.38, .36, 18], [.62, .62, 26], [.4, .66, 12]].forEach(([a, b, r]) => { x.beginPath(); x.arc(w * a, h * b, r, 0, 7); x.fill(); });
+      if (smile) { x.strokeStyle = '#6a4a3a'; x.lineWidth = 7; x.beginPath(); x.arc(w * .42, h * .46, 14, Math.PI + .3, -0.3); x.stroke(); x.beginPath(); x.arc(w * .6, h * .46, 14, Math.PI + .3, -0.3); x.stroke(); x.beginPath(); x.arc(w * .51, h * .56, 24, 0.3, Math.PI - 0.3); x.stroke(); }
+    };
+  },
+};
 
 // ---------- Audio ----------
 let actx;
@@ -100,85 +211,80 @@ function note(f, d = 0.5, type = 'sine', v = 0.12) {
   o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + d);
 }
 const LULL = [392, 440, 523.25, 587.33, 659.25, 783.99];
+function sayHi(m) { hop(m); note(523.25); setTimeout(() => note(659.25, 0.4), 120); }
 
 // ---------- The story (original) ----------
 let page = 0, dim = 0;
 const PAGES = [
   {
-    text: 'Pip the fox lived at the top of Hush Hill.\nEvery night the moon came by to say goodnight.\nBut tonight, the sky was empty.',
-    hint: 'Pinch Pip to say hello. Pinch the glowing corner to turn the page.',
+    heading: 'Hush Hill',
+    text: 'Pip the fox lived at the very top of Hush Hill.\nEvery night, the moon came by to say goodnight.\nBut tonight, the sky was empty.',
+    hint: 'Pinch Pip to say hello. Pinch the gold corner to turn the page.',
     build() {
-      pop(hill(0, -0.03, 0.07, 0x3d5a80), 0); pop(hill(-0.06, 0.05, 0.05, 0x46668f), 0.1);
-      const house = new THREE.Group();
-      const walls = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.03, 0.03), mat(0xd9c3a5)); walls.position.y = 0.015; house.add(walls);
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.025, 4), mat(0x8a3b3b)); roof.position.y = 0.042; roof.rotation.y = Math.PI / 4; house.add(roof);
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(0.01, 0.01), new THREE.MeshBasicMaterial({ color: 0xffd36b })); win.position.set(0, 0.016, 0.0151); house.add(win);
-      house.position.set(0.05, 0, 0.04); pop(house, 0.25);
-      const p = fox(-0.01, 0.06); pop(p, 0.4);
-      tappable(p, () => { hop(p); note(523.25); note(659.25, 0.4); });
+      place(cutout(0.19, 0.08, D.hills('#36507e', '#4a6a98')), 0, -0.08, 0);
+      place(cutout(0.06, 0.06, D.house), 0.05, -0.03, 0.15);
+      place(cutout(0.04, 0.12, D.tree('#2f6b55')), -0.065, -0.05, 0.25);
+      tappable(place(cutout(0.06, 0.045, D.fox(false)), -0.015, 0.04, 0.4), function () { sayHi(this); });
     },
   },
   {
-    text: 'Pip padded into Whisper Wood and found Old Owl.\n"The moon is shy tonight," Owl yawned. "Ask the river. Rivers see everything."',
+    heading: 'Whisper Wood',
+    text: 'Pip padded into Whisper Wood and found Old Owl.\n“The moon is shy tonight,” Owl yawned. “Ask the river. Rivers see everything.”',
     hint: 'Pinch Old Owl.',
     build() {
-      [[-0.06, -0.05, 0.1], [0.06, -0.06, 0.12], [-0.02, -0.08, 0.09], [0.07, 0.05, 0.08], [-0.07, 0.04, 0.09]].forEach(([x, z, h], i) => pop(tree(x, z, h), i * 0.08));
-      const owl = new THREE.Group();
-      const b = new THREE.Mesh(new THREE.SphereGeometry(0.014, 16, 12), mat(0x8a6a4a)); b.scale.y = 1.3; owl.add(b);
-      for (const s of [-1, 1]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffe08a })); e.position.set(s * 0.005, 0.006, 0.012); owl.add(e); }
-      owl.position.set(0.01, 0.06, -0.03); pop(owl, 0.45);
-      tappable(owl, () => { hop(owl); note(330, 0.35, 'triangle'); setTimeout(() => note(262, 0.5, 'triangle'), 300); });
-      const p = fox(-0.02, 0.07); pop(p, 0.5); tappable(p, () => { hop(p); note(523.25); });
+      [[-0.07, -0.09, 0.13, '#24584a'], [0.065, -0.085, 0.14, '#2f6b55'], [-0.02, -0.07, 0.11, '#3a7a60'], [0.075, 0.0, 0.09, '#24584a'], [-0.08, 0.0, 0.1, '#2f6b55']]
+        .forEach(([x, z, h, c], i) => place(cutout(h * 0.42, h, D.tree(c)), x, z, i * 0.07));
+      tappable(place(cutout(0.045, 0.05, D.owl), 0.012, -0.04, 0.45), function () { hop(this); note(330, 0.35, 'triangle'); setTimeout(() => note(262, 0.5, 'triangle'), 300); });
+      tappable(place(cutout(0.06, 0.045, D.fox(false)), -0.03, 0.05, 0.55), function () { sayHi(this); });
     },
   },
   {
-    text: 'The river shimmered. "I only hold the stars," it whispered, "and they have fallen asleep."\nCan you wake them?',
-    hint: 'Pinch each sleepy star in the river.',
+    heading: 'The Sleepy River',
+    text: 'The river shimmered.\n“I only hold the stars,” it whispered, “and they have all fallen asleep.”\nCan you wake them?',
+    hint: 'Pinch each sleepy star to wake it.',
     build() {
-      const river = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.004, 0.06), new THREE.MeshStandardMaterial({ color: 0x2a4a8a, roughness: 0.2, metalness: 0.3 }));
-      river.position.set(0, 0.002, 0); pop(river, 0);
-      pop(hill(-0.06, -0.07, 0.04, 0x3d5a80), 0.1); pop(hill(0.06, 0.08, 0.035, 0x46668f), 0.15);
+      const river = cutout(0.2, 0.09, D.river, { flat: true }); place(river, 0, -0.045, 0);
+      place(cutout(0.19, 0.06, D.hills('#2e4570', '#3e5c8a')), 0, -0.1, 0.05);
       let woke = 0;
       [-0.07, -0.035, 0, 0.035, 0.07].forEach((x, i) => {
-        const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.008), new THREE.MeshBasicMaterial({ color: 0x55607a }));
-        s.position.set(x, 0.012, (i % 2 ? 0.012 : -0.012)); pop(s, 0.2 + i * 0.08);
-        tappable(s, () => {
-          if (s.userData.awake) return; s.userData.awake = true; s.material.color.set(0xfff1a8); hop(s); note(LULL[woke]); woke++;
-          if (woke === 5) { [0, 2, 4].forEach((n, k) => setTimeout(() => note(LULL[n], 0.8), k * 140)); }
+        const s = cutout(0.026, 0.026, D.star(false));
+        place(s, x, -0.01 + (i % 2) * 0.03, 0.2 + i * 0.08);
+        tappable(s, function () {
+          if (s.userData.awake) return; s.userData.awake = true;
+          const t = cutout(0.026, 0.026, D.star(true)); s.material.map = t.material.map; s.material.needsUpdate = true;
+          hop(s); note(LULL[woke]); woke++;
+          if (woke === 5) [0, 2, 4].forEach((n, k) => setTimeout(() => note(LULL[n], 0.8), k * 140));
         });
       });
-      const p = fox(-0.06, 0.07); pop(p, 0.6); tappable(p, () => { hop(p); note(523.25); });
+      tappable(place(cutout(0.06, 0.045, D.fox(false)), -0.06, 0.07, 0.6), function () { sayHi(this); });
     },
   },
   {
+    heading: 'Up, Up, Up',
     text: 'The stars pointed up, up, up.\nThere was the moon, wrapped in a big sleepy cloud that did not want to let go.',
-    hint: 'Pinch the cloud to tickle it awake.',
+    hint: 'Pinch the cloud three times to tickle it awake.',
     build() {
-      pop(hill(0, 0.02, 0.06, 0x3d5a80), 0);
-      const moon = new THREE.Mesh(new THREE.SphereGeometry(0.025, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff4c8 }));
-      moon.position.set(0, 0.14, -0.06); pop(moon, 0.1);
-      const cloud = new THREE.Group();
-      [[-0.025, 0, 0.018], [0, 0.008, 0.024], [0.025, 0, 0.018], [0, -0.008, 0.02]].forEach(([x, y, r]) => {
-        const c = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat(0xe8ecf6)); c.position.set(x, y, 0); cloud.add(c);
-      });
-      cloud.position.set(0, 0.14, -0.04); pop(cloud, 0.3);
+      place(cutout(0.19, 0.06, D.hills('#36507e', '#4a6a98')), 0, -0.02, 0);
+      const moon = place(cutout(0.07, 0.07, D.moon(false)), 0, -0.1, 0.1); moon.userData.lift = 0.06;
+      const cloud = place(cutout(0.11, 0.065, D.cloud), 0, -0.085, 0.3); cloud.userData.lift = 0.065;
       let tickles = 0;
-      tappable(cloud, () => {
+      tappable(cloud, function () {
         tickles++; hop(cloud); note(700 + tickles * 80, 0.2, 'triangle', 0.08);
-        if (tickles >= 3 && !cloud.userData.gone) { cloud.userData.gone = true; cloud.userData.drift = 1; [2, 3, 5].forEach((n, k) => setTimeout(() => note(LULL[n], 0.9), k * 160)); }
+        if (tickles >= 3 && !cloud.userData.drift) { cloud.userData.drift = 1; [2, 3, 5].forEach((n, k) => setTimeout(() => note(LULL[n], 0.9), k * 160)); }
       });
-      const p = fox(0, 0.06); pop(p, 0.4); tappable(p, () => { hop(p); note(523.25); });
+      tappable(place(cutout(0.06, 0.045, D.fox(false)), 0.02, 0.05, 0.45), function () { sayHi(this); });
     },
   },
   {
-    text: 'The moon smiled down on Hush Hill.\n"Goodnight, Pip," said the moon.\nPip curled into a warm, round ball.\nGoodnight, Pip. Goodnight, you.',
+    heading: 'Goodnight',
+    text: 'The moon smiled down on Hush Hill.\n“Goodnight, Pip,” said the moon.\nPip curled into a warm, round ball.\nGoodnight, Pip.\nGoodnight, you.',
     hint: 'Pinch the moon to say goodnight. Pinch the corner to read again.',
     build() {
-      pop(hill(0, 0, 0.07, 0x2f4a6e), 0);
-      const moon = new THREE.Mesh(new THREE.SphereGeometry(0.03, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff4c8 }));
-      moon.position.set(0.04, 0.15, -0.07); pop(moon, 0.1);
-      tappable(moon, () => { hop(moon); [0, 2, 4, 5].forEach((n, k) => setTimeout(() => note(LULL[n] / 2, 1.2), k * 220)); dim = 1; });
-      pop(fox(0, 0.07, true), 0.3);
+      place(cutout(0.19, 0.08, D.hills('#2b3f66', '#3a5580')), 0, -0.07, 0);
+      place(cutout(0.06, 0.06, D.house), 0.055, -0.03, 0.12);
+      const moon = cutout(0.08, 0.08, D.moon(true)); place(moon, -0.03, -0.1, 0.2); moon.userData.lift = 0.07;
+      tappable(moon, function () { hop(moon); [0, 2, 4, 5].forEach((n, k) => setTimeout(() => note(LULL[n] / 2, 1.2), k * 220)); dim = 1; });
+      place(cutout(0.06, 0.04, D.fox(true)), -0.01, 0.05, 0.35);
     },
   },
 ];
@@ -186,22 +292,21 @@ const PAGES = [
 function showPage(n) {
   page = n; stage.clear(); pops = []; tappables = []; dim = 0;
   PAGES[n].build();
-  drawPages(n + 1, PAGES.length, PAGES[n].text, PAGES[n].hint);
+  drawPages(n + 1, PAGES.length, PAGES[n].heading, PAGES[n].text, PAGES[n].hint);
 }
 function turnPage() { note(880, 0.15, 'sine', 0.05); showPage((page + 1) % PAGES.length); }
 
-// ---------- Picking (pinch point / mouse ray) ----------
-function hitObject(p, r = 0.025) {
+// ---------- Picking ----------
+function hitObject(p) {
   if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(p) < 0.03) return 'corner';
-  let best = null, bd = r;
+  let best = null, bd = 0.02;
   for (const t of tappables) {
-    const box = new THREE.Box3().setFromObject(t).expandByScalar(0.008);
-    if (box.containsPoint(p)) return t;
+    const box = new THREE.Box3().setFromObject(t).expandByScalar(0.01);
     const d = box.distanceToPoint(p); if (d < bd) { bd = d; best = t; }
   }
   return best;
 }
-function activate(h) { if (h === 'corner') turnPage(); else if (h) h.userData.onPinch(); }
+function activate(h) { if (h === 'corner') turnPage(); else if (h) h.userData.onPinch.call(h); }
 
 const hands = [0, 1].map(i => {
   const hand = renderer.xr.getHand(i); scene.add(hand);
@@ -225,25 +330,29 @@ const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 renderer.domElement.addEventListener('pointerdown', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   if (ray.intersectObject(corner).length) return turnPage();
-  const hit = ray.intersectObjects(tappables, true)[0];
-  if (hit) { let o = hit.object; while (o && !o.userData.onPinch) o = o.parent; if (o) o.userData.onPinch(); }
+  const hit = ray.intersectObjects(tappables, false)[0];
+  if (hit) hit.object.userData.onPinch.call(hit.object);
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- Loop ----------
 const clock = new THREE.Clock();
+const backOut = k => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
 showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   updateHands();
   for (const m of pops) {
     const u = m.userData;
-    if (u.popT < 1) { u.popT += dt * 1.8; const k = Math.max(0, Math.min(1, u.popT)); const e = 1 + 2.7 * Math.pow(k - 1, 3) + 1.7 * Math.pow(k - 1, 2); m.scale.copy(u.baseScale).multiplyScalar(Math.max(0.0001, e)); }
-    if (u.hop) { u.hop = Math.max(0, u.hop - dt * 3); m.position.y = (u.baseY ??= m.position.y) + Math.sin(u.hop * Math.PI) * 0.02; }
-    if (u.drift) { m.position.x += dt * 0.05; m.position.y += dt * 0.02; }
+    // fold up from the page like paper engineering
+    if (u.popT < 1) { u.popT += dt * 1.6; const k = Math.max(0, Math.min(1, u.popT)); const target = u.flat ? -Math.PI / 2 : 0; m.rotation.x = -Math.PI / 2 + (target + Math.PI / 2) * (u.flat ? k : backOut(k)); }
+    let y = u.baseY + (u.lift && u.popT >= 0 ? u.lift * Math.min(1, u.popT) : 0);
+    if (u.hop) { u.hop = Math.max(0, u.hop - dt * 3); y += Math.sin(u.hop * Math.PI) * 0.015; }
+    if (u.drift) { u.drift += dt; m.position.x = Math.min(0.2, (u.drift - 1) * 0.08); y += (u.drift - 1) * 0.02; }
+    if (u.lift && !u.hop) y += Math.sin(t * 1.5 + m.position.x * 30) * 0.003;
+    m.position.y = y;
   }
-  corner.scale.setScalar(1 + 0.25 * Math.sin(t * 3));
-  const target = dim ? 0.35 : 1;
-  hemi.intensity += (1.4 * target - hemi.intensity) * dt;
+  corner.scale.setScalar(1 + 0.2 * Math.sin(t * 3));
+  renderer.toneMappingExposure += ((dim ? 0.45 : 1) - renderer.toneMappingExposure) * dt * 0.8;
   renderer.render(scene, camera);
 });
