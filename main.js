@@ -500,7 +500,37 @@ function showPage(n) {
   PAGES[n].build();
   drawPages(n + 1, PAGES.length, PAGES[n].heading, PAGES[n].text, PAGES[n].hint);
 }
-function turnPage() { note(880, 0.15, 'sine', 0.05); showPage((page + 1) % PAGES.length); }
+// Real page turn: the right page lifts from the spine, curls, and flips over to the left
+let flip = null;
+function turnPage() {
+  if (flip) return;
+  note(880, 0.15, 'sine', 0.05);
+  const snap = document.createElement('canvas'); snap.width = right.c.width; snap.height = right.c.height;
+  snap.getContext('2d').drawImage(right.c, 0, 0);
+  const front = new THREE.CanvasTexture(snap); front.colorSpace = THREE.SRGBColorSpace;
+  const geo = new THREE.PlaneGeometry(PW, PD, 24, 1);
+  const g = new THREE.Group(); g.position.y = 0.003; BOOK.add(g);
+  const sheet = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: front, side: THREE.FrontSide }));
+  const back = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xefe4cc, side: THREE.BackSide }));
+  for (const m of [sheet, back]) { m.rotation.x = -Math.PI / 2; m.position.x = PW / 2; g.add(m); }
+  stage.visible = false;
+  flip = { g, geo, p: 0, swapped: false, base: Float32Array.from(geo.attributes.position.array) };
+  setTimeout(() => note(660, 0.25, 'triangle', 0.03), 250);
+}
+function updateFlip(dt) {
+  if (!flip) return;
+  const f = flip; f.p = Math.min(1, f.p + dt * 1.25);
+  const e = f.p < 0.5 ? 2 * f.p * f.p : 1 - Math.pow(-2 * f.p + 2, 2) / 2;   // ease in-out
+  f.g.rotation.z = e * Math.PI;
+  const pos = f.geo.attributes.position, lift = Math.sin(e * Math.PI);
+  for (let i = 0; i < pos.count; i++) {
+    const x = f.base[i * 3], u = (x + PW / 2) / PW;                           // 0 at spine, 1 at edge
+    pos.setZ(i, lift * 0.05 * u * u - lift * 0.02 * u);                      // paper curl
+  }
+  pos.needsUpdate = true;
+  if (!f.swapped && f.p > 0.5) { f.swapped = true; showPage((page + 1) % PAGES.length); stage.visible = true; }
+  if (f.p >= 1) { BOOK.remove(f.g); f.geo.dispose(); flip = null; }
+}
 
 // ---------- Picking ----------
 function hitObject(p) {
@@ -562,6 +592,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   grassU.uTime.value = t;
   updateWorld(t, dt);
+  updateFlip(dt);
   updateHands();
   updateBreath(dt);
   for (const m of pops) {
