@@ -254,12 +254,54 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: nu
 function ripple(uv, strength = 1) {
   const r = world.rip[world.ripI++ % world.rip.length]; r.set(uv.x, uv.y, grassU.uTime.value, strength);
 }
-function plop() {
+// Realistic water: Minnaert-style bubble resonances (rising chirp) + splash noise + outdoor reverb
+let reverb = null;
+function getReverb() {
+  if (reverb) return reverb;
+  const len = actx.sampleRate * 2.2, ir = actx.createBuffer(2, len, actx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+  const conv = actx.createConvolver(); conv.buffer = ir;
+  const wet = actx.createGain(); wet.gain.value = 0.35; conv.connect(wet).connect(actx.destination);
+  reverb = conv; return conv;
+}
+function bubble(when, f0, amp, dur) {
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f0, when);
+  o.frequency.exponentialRampToValueAtTime(f0 * (1.6 + Math.random() * 0.8), when + dur);   // the rising "bloop"
+  g.gain.setValueAtTime(0.0001, when); g.gain.exponentialRampToValueAtTime(amp, when + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.connect(g); g.connect(actx.destination); g.connect(getReverb());
+  o.start(when); o.stop(when + dur + 0.02);
+}
+function plop(strength = 1) {
   actx ??= new AudioContext();
-  const o = actx.createOscillator(), g = actx.createGain(); o.type = 'sine';
-  o.frequency.setValueAtTime(900, actx.currentTime); o.frequency.exponentialRampToValueAtTime(180, actx.currentTime + 0.18);
-  g.gain.setValueAtTime(0.18, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.3);
-  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.3);
+  const t = actx.currentTime;
+  // splash: short band-limited noise burst
+  const len = Math.floor(actx.sampleRate * 0.18), buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5200;
+  const g = actx.createGain(); g.gain.value = 0.09 * strength;
+  src.connect(hp).connect(lp).connect(g); g.connect(actx.destination); g.connect(getReverb()); src.start(t);
+  // main bubble plus a few smaller ones
+  bubble(t + 0.005, 520 + Math.random() * 260, 0.22 * strength, 0.07 + Math.random() * 0.03);
+  const n = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) bubble(t + 0.03 + Math.random() * 0.22, 900 + Math.random() * 1400, 0.07 * strength, 0.03 + Math.random() * 0.03);
+}
+// Ambient trickle near the pond: soft filtered water noise plus occasional tiny drips
+let pondAmbience = false;
+function startPondAmbience() {
+  if (pondAmbience || !actx) return; pondAmbience = true;
+  const len = actx.sampleRate * 4, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  let last = 0; for (let i = 0; i < len; i++) { last = last * 0.97 + (Math.random() * 2 - 1) * 0.03; d[i] = last * 6; }
+  const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 0.4;
+  const g = actx.createGain(); g.gain.value = 0.035;
+  src.connect(bp).connect(g).connect(actx.destination); src.start();
+  const drip = () => { bubble(actx.currentTime, 1400 + Math.random() * 1600, 0.025, 0.03 + Math.random() * 0.02); setTimeout(drip, 1800 + Math.random() * 4200); };
+  setTimeout(drip, 1500);
 }
 function rustle() {
   actx ??= new AudioContext();
@@ -286,7 +328,7 @@ function touchWorld(origin, dir) {
   const hits = r.intersectObjects([world.pond, ...world.trees], true);
   if (!hits.length) return false;
   const h = hits[0];
-  if (h.object === world.pond) { ripple(h.uv, 1); plop(); return true; }
+  if (h.object === world.pond) { ripple(h.uv, 1); plop(1); startPondAmbience(); return true; }
   let o = h.object; while (o && !world.trees.includes(o)) o = o.parent;
   if (o) { shakeTree(o); return true; }
   return false;
@@ -778,7 +820,7 @@ function updateHands() {
     h.slot.value.copy(palm && palm.visible ? palm.getWorldPosition(new THREE.Vector3()).lerp(a, 0.5) : a);
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
-    if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.02 && (!h.lastRip || t0() - h.lastRip > 0.25)) { h.lastRip = t0(); ripple(new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5), 0.8); } }
+    if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.02 && (!h.lastRip || t0() - h.lastRip > 0.25)) { h.lastRip = t0(); ripple(new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5), 0.8); plop(0.6); startPondAmbience(); } }
     const cp = !h.pinching && pageCanvasPoint(a);
     if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
     else if (penOwner === h) { pen.visible = false; penOwner = null; }
@@ -809,7 +851,7 @@ renderer.domElement.addEventListener('pointermove', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
   const ph = world.pond && ray.intersectObject(world.pond)[0];
-  if (ph && (!world.lastHover || t0() - world.lastHover > 0.3)) { world.lastHover = t0(); ripple(ph.uv, 0.6); }
+  if (ph && (!world.lastHover || t0() - world.lastHover > 0.3)) { world.lastHover = t0(); ripple(ph.uv, 0.6); if (actx) { bubble(actx.currentTime, 1100 + Math.random() * 1200, 0.03, 0.035); startPondAmbience(); } }
   const hit = ray.intersectObject(left.m)[0];
   if (hit && !renderer.xr.isPresenting) {
     pen.visible = true; pen.position.copy(hit.point);
