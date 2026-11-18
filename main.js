@@ -907,26 +907,52 @@ const OWL = [
       tappable(m, function () { hop(m); [0, 2, 4, 5].forEach((n, k) => setTimeout(() => note(LULL[n] / 2, 1.2), k * 220)); dim = 1; }); } },
 ];
 const STORY_LIST = [
-  { id: 'pip', title: 'Pip Finds the Moon', sub: `${PIP.length} pages`, color: '#3a4f8a', icon: ICON.moon, pages: PIP },
-  { id: 'balloon', title: 'The Paper Balloon', sub: `${BALLOON.length} pages`, color: '#b34a5a', icon: ICON.balloon, pages: BALLOON },
-  { id: 'owl', title: "Old Owl Can't Sleep", sub: `${OWL.length} pages`, color: '#2f6b55', icon: ICON.owl, pages: OWL },
+  { id: 'pip', title: 'Pip Finds the Moon', sub: `${PIP.length} pages`, color: '#3a4f8a', icon: ICON.moon, pages: PIP, blurb: 'The moon is missing from the sky over Hush Hill. Help Pip ask Old Owl, wake the sleepy river stars and tickle a cloud, then breathe slowly before goodnight.' },
+  { id: 'balloon', title: 'The Paper Balloon', sub: `${BALLOON.length} pages`, color: '#b34a5a', icon: ICON.balloon, pages: BALLOON, blurb: 'Pip finds a little paper balloon in the grass and floats over the glowing village to visit a very quiet star party, then drifts softly home to bed.' },
+  { id: 'owl', title: "Old Owl Can't Sleep", sub: `${OWL.length} pages`, color: '#2f6b55', icon: ICON.owl, pages: OWL, blurb: 'Old Owl is wide awake. Count the fireflies with Pip and share three slow breaths until the whole of Whisper Wood falls asleep.' },
 ];
 const LIBRARY = [{
-  heading: "Tonight's Stories", text: 'Every night on Hush Hill there is a story waiting to be read.\nWhich one shall we read tonight?',
-  hint: 'Pinch a book to open it.',
+  heading: 'Pick One Story for Tonight', text: 'Every night on Hush Hill there is a story waiting to be read.\nLook at the books, choose the one you would like tonight, and we will read it together.',
+  hint: 'Pinch a book to choose it.',
   build() {
-    place(cutout(0.19, 0.06, D.hills('#36507e', '#4a6a98')), 0, -0.1, 0);
+    lib.covers = []; lib.hover = null; lib.sel = null;
+    place(cutout(0.19, 0.06, D.hills('#36507e', '#4a6a98')), 0, -0.105, 0);
     STORY_LIST.forEach((st, i) => {
-      const c = place(cutout(0.056, 0.078, D.cover(st.title, st.sub, st.color, st.icon)), -0.066 + i * 0.066, -0.005 + (i % 2) * 0.02, 0.15 + i * 0.12);
-      tappable(c, function () { hop(this); note(523.25 + i * 90); pending = st; turnPage(); });
+      const W = 0.064, H = 0.09;
+      const c = place(cutout(W, H, D.cover(st.title, st.sub, st.color, st.icon)), -0.068 + i * 0.068, -0.01 + Math.abs(i - 1) * 0.012, 0.15 + i * 0.12);
+      c.rotation.y = (1 - i) * 0.22;                                   // gentle fan
+      const glowG = new THREE.PlaneGeometry(W * 1.16, H * 1.12); glowG.translate(0, H / 2, -0.0008);
+      const glow = new THREE.Mesh(glowG, new THREE.MeshBasicMaterial({ color: 0xffd36b, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+      c.add(glow); c.userData.glow = glow; c.userData.story = st; c.userData.lib = { s: 1, y: 0 };
+      lib.covers.push(c);
+      tappable(c, function () {
+        if (lib.sel === this) { note(659.25); setTimeout(() => note(783.99, 0.6), 120); pending = st; turnPage(); return; }
+        lib.sel = this; hop(this); [523.25, 659.25].forEach((f, k) => setTimeout(() => note(f, 0.4), k * 90));
+        drawPages(1, 1, 'Tonight: ' + st.title, st.blurb, 'Pinch ' + st.title + ' again to open it.');
+      });
     });
   },
 }];
 let PAGES = LIBRARY, storyId = 'lib', pending = null, goLib = false;
+const lib = { covers: [], hover: null, sel: null, lastHover: null };
+function libHover(c) {
+  if (c === lib.hover) return; lib.hover = c;
+  if (c && actx) { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 1320; g.gain.setValueAtTime(0.03, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.06); o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.07); }
+}
+function updateLibrary(dt) {
+  if (PAGES !== LIBRARY) return;
+  for (const c of lib.covers) {
+    const L = c.userData.lib, isSel = lib.sel === c, isHov = lib.hover === c;
+    const ts = isSel ? 1.32 : isHov ? 1.18 : lib.sel ? 0.84 : 1, ty = isSel ? 0.022 : isHov ? 0.01 : 0;
+    L.s += (ts - L.s) * Math.min(1, dt * 9); L.y += (ty - L.y) * Math.min(1, dt * 9);
+    if (c.userData.popT >= 1) { c.scale.setScalar(L.s); c.userData.baseY = L.y; }
+    c.userData.glow.material.opacity += ((isSel ? 0.9 : isHov ? 0.35 : 0) - c.userData.glow.material.opacity) * Math.min(1, dt * 9);
+  }
+}
 function nextTarget() {
   if (goLib) { goLib = false; return [LIBRARY, 0, 'lib']; }
   if (pending) { const p = pending; pending = null; return [p.pages, 0, p.id]; }
-  if (PAGES === LIBRARY) return [STORY_LIST[0].pages, 0, STORY_LIST[0].id];
+  if (PAGES === LIBRARY) { const st = lib.sel ? lib.sel.userData.story : STORY_LIST[0]; return [st.pages, 0, st.id]; }
   if (page + 1 >= PAGES.length) return [LIBRARY, 0, 'lib'];
   return [PAGES, page + 1, storyId];
 }
@@ -1017,7 +1043,9 @@ function updateHands() {
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
     if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.03) { const uv = new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5); const sp = h.lastWet ? a.distanceTo(h.lastWet) / Math.max(dtH, 1e-3) : 0; if (!h.inWater) { plop(0.7); h.inWater = true; } if (!h.lastRip || t0() - h.lastRip > 0.06) { h.lastRip = t0(); stirAt(uv, sp * 0.3); } h.lastWet = a.clone(); } else { h.inWater = false; h.lastWet = null; } }
-    if (h === hands[0]) cornerNear = false;
+    if (h === hands[0]) { cornerNear = false; if (PAGES === LIBRARY) lib.frameHover = null; }
+    if (PAGES === LIBRARY) for (const c of lib.covers) if (new THREE.Box3().setFromObject(c).expandByScalar(0.015).containsPoint(a)) lib.frameHover = c;
+    if (PAGES === LIBRARY && h === hands[1]) libHover(lib.frameHover || null);
     if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(a) < 0.07) cornerNear = true;
     const cp = !h.pinching && pageCanvasPoint(a);
     if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
@@ -1065,6 +1093,7 @@ renderer.domElement.addEventListener('pointermove', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
   cornerNear = !!ray.intersectObject(corner).length;
+  if (PAGES === LIBRARY) { const ch = ray.intersectObjects(lib.covers, false)[0]; libHover(ch ? ch.object : null); }
   if (drag.tree) { const g = drag.tree.userData.grab; g.tz = Math.max(-0.5, Math.min(0.5, -(e.clientX - g.x) * 0.0022)); g.tx = Math.max(-0.4, Math.min(0.4, (e.clientY - g.y) * 0.0022)); return; }
   const ph = world.pond && ray.intersectObject(world.pond)[0];
   if (ph && drag.pond) { const sp = Math.hypot(e.movementX || 0, e.movementY || 0) / 400; if (!world.lastStir || t0() - world.lastStir > 0.05) { world.lastStir = t0(); stirAt(ph.uv, sp); } return; }
@@ -1104,6 +1133,7 @@ renderer.setAnimationLoop(() => {
     m.position.y = y;
   }
   updatePeel(t, dt);
+  updateLibrary(dt);
   renderer.toneMappingExposure += ((dim ? 0.45 : 1) - renderer.toneMappingExposure) * dt * 0.8;
   renderer.render(scene, camera);
 });
