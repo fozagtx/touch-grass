@@ -582,7 +582,7 @@ function drawPages(n, total, heading, text, hint) {
 
 // Page corner: a folded, glowing dog-ear you pinch to turn
 // Invisible hit area for the corner, plus a real curled page corner that peels up to invite a turn
-const CR = 0.05;
+const CR = 0.08;
 const corner = new THREE.Mesh(new THREE.PlaneGeometry(CR, CR), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
 corner.rotation.x = -Math.PI / 2; corner.position.set(PW - CR / 2, 0.009, PD / 2 - CR / 2); BOOK.add(corner);
 const peelGeo = new THREE.PlaneGeometry(CR, CR, 14, 14), peelBase = Float32Array.from(peelGeo.attributes.position.array);
@@ -595,24 +595,28 @@ const peelBack = new THREE.Mesh(peelGeo, new THREE.MeshBasicMaterial({ map: tex(
 const peelShadow = new THREE.Mesh(new THREE.PlaneGeometry(CR, CR), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, map: tex(128, 128, (x, w, h) => {
   const g = x.createLinearGradient(w, h, w * 0.35, h * 0.35); g.addColorStop(0, 'rgba(60,40,20,.45)'); g.addColorStop(1, 'rgba(60,40,20,0)'); x.fillStyle = g; x.beginPath(); x.moveTo(w, 0); x.lineTo(w, h); x.lineTo(0, h); x.closePath(); x.fill(); }) }));
 for (const m of [peelFront, peelBack]) { m.rotation.x = -Math.PI / 2; m.position.set(PW - CR / 2, 0.0062, PD / 2 - CR / 2); BOOK.add(m); }
-peelShadow.rotation.x = -Math.PI / 2; peelShadow.position.set(PW - CR / 2, 0.0058, PD / 2 - CR / 2); BOOK.add(peelShadow);
+peelShadow.rotation.x = -Math.PI / 2; peelShadow.position.set(PW - CR / 2, 0.0059, PD / 2 - CR / 2); BOOK.add(peelShadow);
+// what you see under the lifting corner: the blank next page, not the same page again
+const peelUnder = new THREE.Mesh(new THREE.PlaneGeometry(CR, CR), new THREE.MeshBasicMaterial({ map: tex(128, 128, (x, w, h) => { x.fillStyle = '#f3e7cc'; x.fillRect(0, 0, w, h); x.save(); x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.5; x.drawImage(GRAIN, 0, 0, 160, 160, 0, 0, w, h); x.restore(); }) }));
+peelUnder.rotation.x = -Math.PI / 2; peelUnder.position.set(PW - CR / 2, 0.0056, PD / 2 - CR / 2); BOOK.add(peelUnder);
 let peelAmt = 0.3, peelTarget = 0.3, cornerNear = false;
 function updatePeel(t, dt) {
-  peelTarget = cornerNear ? 0.95 : 0.5 + 0.12 * Math.sin(t * 1.8);
+  const ph = t % 4.2, tease = ph < 1.4 ? Math.sin(ph / 1.4 * Math.PI) : 0;      // every few seconds the corner lifts like it's about to turn
+  peelTarget = cornerNear ? 1.0 : 0.28 + 0.62 * tease * tease;
   peelAmt += (peelTarget - peelAmt) * Math.min(1, dt * 6);
   const pa = peelGeo.attributes.position, a = flip ? 0 : peelAmt;
   for (let i = 0; i < pa.count; i++) {
     const px = peelBase[i * 3], py = peelBase[i * 3 + 1];
     const s = ((px / CR + 0.5) + (0.5 - py / CR)) / 2;               // 0 far side → 1 at the page corner
-    const k = Math.max(0, s - (1 - a * 0.62)) / 0.62;                 // how much of the corner is lifting
-    const ang = k * Math.PI * 0.9 * a;                                 // roll the paper over itself
-    const r = 0.012 + 0.01 * (1 - a);
+    const k = Math.max(0, s - (1 - a * 0.75)) / 0.75;                 // how much of the corner is lifting
+    const ang = k * Math.PI * 0.95 * a;                                 // roll the paper over itself
+    const r = 0.02 + 0.012 * (1 - a);
     const back = Math.sin(ang) * r, up = (1 - Math.cos(ang)) * r * 1.6 + k * k * 0.004 * a;
     pa.setXYZ(i, px - back * 0.7, py + back * 0.7, up);
   }
   pa.needsUpdate = true;
   peelShadow.material.opacity = flip ? 0 : Math.max(0, (a - 0.2) * 1.2);
-  peelFront.visible = peelBack.visible = peelShadow.visible = !flip;
+  peelFront.visible = peelBack.visible = peelShadow.visible = peelUnder.visible = !flip;
 }
 
 // ---------- Paper cut-outs that fold up off the page ----------
@@ -1055,7 +1059,7 @@ function updateFlip(dt) {
 
 // ---------- Picking ----------
 function hitObject(p) {
-  if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(p) < 0.03) return 'corner';
+  if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(p) < 0.05) return 'corner';
   let best = null, bd = 0.02;
   for (const t of tappables) {
     const box = new THREE.Box3().setFromObject(t).expandByScalar(0.01);
@@ -1086,7 +1090,7 @@ function updateHands() {
     if (h === hands[0]) { cornerNear = false; if (PAGES === LIBRARY) lib.frameHover = null; }
     if (PAGES === LIBRARY) for (const c of lib.covers) if (new THREE.Box3().setFromObject(c).expandByScalar(0.015).containsPoint(a)) lib.frameHover = c;
     if (PAGES === LIBRARY && h === hands[1]) libHover(lib.frameHover || null);
-    if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(a) < 0.07) cornerNear = true;
+    if (corner.getWorldPosition(new THREE.Vector3()).distanceTo(a) < 0.09) cornerNear = true;
     const cp = !h.pinching && pageCanvasPoint(a);
     if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
     else if (penOwner === h) { pen.visible = false; penOwner = null; }
