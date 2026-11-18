@@ -276,6 +276,19 @@ const PAGES = [
     },
   },
   {
+    heading: 'Breathe with Pip',
+    text: 'Before sleep, Pip and the moon always shared three slow breaths.\nPinch and hold while you breathe in…\nthen let go, and breathe out slowly.\nEvery breath sends a little star up into the sky.',
+    hint: 'Pinch and hold to breathe in. Let go to breathe out.',
+    build() {
+      place(cutout(0.19, 0.06, D.hills('#2e4570', '#3e5c8a')), 0, -0.09, 0);
+      tappable(place(cutout(0.06, 0.045, D.fox(false)), -0.05, 0.05, 0.3), function () { sayHi(this); });
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.03, 32, 20), new THREE.MeshBasicMaterial({ color: 0xfff2c2, transparent: true, opacity: 0.85 }));
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(0.045, 32, 20), new THREE.MeshBasicMaterial({ color: 0xffd59a, transparent: true, opacity: 0.18, depthWrite: false }));
+      orb.add(halo); orb.position.set(0.01, 0.1, -0.03); stage.add(orb);
+      breath = { orb, level: 0.35, peak: 0, count: 0 };
+    },
+  },
+  {
     heading: 'Goodnight',
     text: 'The moon smiled down on Hush Hill.\n“Goodnight, Pip,” said the moon.\nPip curled into a warm, round ball.\nGoodnight, Pip.\nGoodnight, you.',
     hint: 'Pinch the moon to say goodnight. Pinch the corner to read again.',
@@ -289,8 +302,38 @@ const PAGES = [
   },
 ];
 
+// ---------- Breathing (pinch-hold = inhale, release = exhale) ----------
+let breath = null, holding = false, swell = null;
+function breatheStart() {
+  holding = true;
+  actx ??= new AudioContext();
+  const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 196;
+  g.gain.setValueAtTime(0.0001, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.06, actx.currentTime + 4);
+  o.connect(g).connect(actx.destination); o.start(); swell = { o, g };
+}
+function breatheEnd() {
+  holding = false;
+  if (swell) { const { o, g } = swell; g.gain.cancelScheduledValues(actx.currentTime); g.gain.setValueAtTime(g.gain.value, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 6); o.stop(actx.currentTime + 6); swell = null; }
+}
+function updateBreath(dt) {
+  if (!breath) return;
+  const b = breath;
+  if (holding) { b.level = Math.min(1, b.level + dt / 4); b.peak = Math.max(b.peak, b.level); }   // ~4 s in
+  else {
+    b.level = Math.max(0.35, b.level - dt / 6 * 0.65);                                              // ~6 s out
+    if (b.peak > 0.8 && b.level <= 0.36) {                                                          // one full breath
+      b.peak = 0; b.count++;
+      const s = cutout(0.022, 0.022, D.star(true)); s.rotation.x = 0; s.userData.rise = 1;
+      s.position.set(b.orb.position.x + (Math.random() - 0.5) * 0.06, b.orb.position.y, b.orb.position.z); stage.add(s); pops.push(s);
+      note(LULL[(b.count - 1) % LULL.length], 1.2);
+      if (b.count === 3) drawPages(page + 1, PAGES.length, PAGES[page].heading, PAGES[page].text, 'Three breaths. Lovely. Pinch the corner when you are ready.');
+    }
+  }
+  b.orb.scale.setScalar(b.level);
+}
+
 function showPage(n) {
-  page = n; stage.clear(); pops = []; tappables = []; dim = 0;
+  page = n; stage.clear(); pops = []; tappables = []; dim = 0; breath = null; if (holding) breatheEnd();
   PAGES[n].build();
   drawPages(n + 1, PAGES.length, PAGES[n].heading, PAGES[n].text, PAGES[n].hint);
 }
@@ -321,8 +364,10 @@ function updateHands() {
     const a = ti.getWorldPosition(new THREE.Vector3()), b = tt.getWorldPosition(new THREE.Vector3());
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
-    if (!h.pinching && d < 0.02) { h.pinching = true; activate(hitObject(p)); }
-    else if (h.pinching && d > 0.035) h.pinching = false;
+    if (!h.pinching && d < 0.02) {
+      h.pinching = true; const hit = hitObject(p);
+      if (!hit && breath) { h.breathing = true; breatheStart(); } else activate(hit);
+    } else if (h.pinching && d > 0.035) { h.pinching = false; if (h.breathing) { h.breathing = false; breatheEnd(); } }
   }
 }
 
@@ -332,7 +377,9 @@ renderer.domElement.addEventListener('pointerdown', e => {
   if (ray.intersectObject(corner).length) return turnPage();
   const hit = ray.intersectObjects(tappables, false)[0];
   if (hit) hit.object.userData.onPinch.call(hit.object);
+  else if (breath) breatheStart();
 });
+addEventListener('pointerup', () => { if (holding) breatheEnd(); });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------- Loop ----------
@@ -342,8 +389,10 @@ showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   updateHands();
+  updateBreath(dt);
   for (const m of pops) {
     const u = m.userData;
+    if (u.rise) { m.position.y += dt * 0.03; m.position.x += Math.sin(t * 2 + m.id) * dt * 0.005; continue; }
     // fold up from the page like paper engineering
     if (u.popT < 1) { u.popT += dt * 1.6; const k = Math.max(0, Math.min(1, u.popT)); const target = u.flat ? -Math.PI / 2 : 0; m.rotation.x = -Math.PI / 2 + (target + Math.PI / 2) * (u.flat ? k : backOut(k)); }
     let y = u.baseY + (u.lift && u.popT >= 0 ? u.lift * Math.min(1, u.popT) : 0);
