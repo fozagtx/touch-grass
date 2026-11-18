@@ -7,8 +7,11 @@
 <title>Touch Grass</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0b1026; color: #f6ecd6; font-family: Georgia, serif; overflow: hidden; }
-  #intro { position: fixed; left: 16px; top: 16px; max-width: 300px; font-size: 13px; line-height: 1.5; background: rgba(11,16,38,.8); padding: 12px 14px; border-radius: 10px; }
-  #intro h1 { font-size: 20px; margin: 0 0 6px; }
+  #intro { position: fixed; left: 16px; top: 16px; max-width: 320px; padding: 10px 14px; border-radius: 12px; background: rgba(11,16,38,.55); backdrop-filter: blur(6px); transition: opacity .8s ease; pointer-events: none; }
+  #intro h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  #intro p { margin: 4px 0 0; font-size: 12px; opacity: .8; }
+  #intro.faded { opacity: 0; }
+  html, body, canvas { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -20,10 +23,10 @@
 <body>
 <div id="intro">
   <h1>Touch Grass</h1>
-  A calming pop-up storybook in a meadow you can touch. Brush the grass with your hands. Pinch the glowing corner to turn the page and the world pops up from the book. Pinch the characters to help Pip find the moon.<br><br>
-  On Quest: press <b>Enter VR</b> and put the controllers down.<br>On desktop: click to interact, hover the pen over the words to highlight them, scroll or use the arrow keys to look around.
+  <p>Brush the grass · tap the gold corner · pen over words · scroll to look</p>
 </div>
 <button id="skybtn" style="position:fixed;right:16px;top:16px;z-index:5;padding:10px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.25);background:rgba(11,16,38,.75);color:#f6ecd6;font:15px Georgia,serif;cursor:pointer">☁  Look at the sky</button>
-<script type="module" src="./main.js?v=book11"></script>
+<script>setTimeout(()=>document.getElementById("intro").classList.add("faded"),7000)</script>
+<script type="module" src="./main.js?v=ui12"></script>
 </body>
 </html>
