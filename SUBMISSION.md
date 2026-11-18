@@ -1,11 +1,11 @@
-# Devpost fields: Pop-Up Night
+# Devpost fields: Touch Grass
 
-**Name:** Pop-Up Night
+**Name:** Touch Grass
 **Tagline (≤140):** A bedtime pop-up storybook on your tray table. Pinch the page to turn it, and the world pops up. Breathe with Pip to calm down. Hands only.
 **Track:** Entertainment
 **Division:** New Experience
-**Project link:** https://fozagtx.github.io/popup-night/
-**Code:** https://github.com/fozagtx/popup-night
+**Project link:** https://fozagtx.github.io/touch-grass/
+**Code:** https://github.com/fozagtx/touch-grass
 **Target launch date:** December 2026 (playable today in the Meta Quest Browser)
 
 ## Description

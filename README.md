@@ -1,10 +1,10 @@
-# Pop-Up Night
+# Touch Grass
 
-![Pop-Up Night](media/logo-thumbnail.png)
+![Touch Grass](media/logo-thumbnail.png)
 
 A bedtime pop-up storybook that opens on your tray table in VR. Pinch the glowing corner to turn the page, and each page's world pops up out of the book. Pinch the characters to help Pip the fox find the moon. Hands only, seated, about three minutes from first page to goodnight.
 
-**Play:** https://fozagtx.github.io/popup-night/ (Meta Quest Browser → Enter VR → put the controllers down)
+**Play:** https://fozagtx.github.io/touch-grass/ (Meta Quest Browser → Enter VR → put the controllers down)
 
 ![Page 1](media/page-1.png)
 
