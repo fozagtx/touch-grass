@@ -48,7 +48,7 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
   const mat = new THREE.ShaderMaterial({
     uniforms: grassU, side: THREE.DoubleSide,
     vertexShader: `
-      uniform float uTime; uniform vec3 uH0, uH1, uH2; varying float vH; varying float vShade;
+      uniform float uTime; uniform vec3 uH0, uH1, uH2; attribute float aTint; attribute float aBend; varying float vH; varying float vShade;
       vec2 push(vec3 h, vec3 root, float k) {
         vec2 d = root.xz - h.xz; float dist = length(d) + 1e-4;
         float near = (1.0 - smoothstep(0.0, 0.07, dist)) * (1.0 - smoothstep(0.0, 0.08, abs(h.y - root.y - 0.02)));
@@ -57,6 +57,7 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
       void main() {
         vH = uv.y;
         vec3 p = position; p.x *= (1.0 - uv.y * 0.9);
+        p.z += aBend * uv.y * uv.y * 0.018; p.y -= aBend * uv.y * uv.y * 0.006;   // curved blade
         vec4 root = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
         vec4 w = instanceMatrix * vec4(p, 1.0);
         float k = uv.y * uv.y;
@@ -64,29 +65,49 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
         w.z += cos(uTime * 1.1 + root.x * 6.0) * 0.004 * k;
         vec2 b = push(uH0, root.xyz, 0.035) + push(uH1, root.xyz, 0.035) + push(uH2, root.xyz, 0.035);
         w.xz += b * k; w.y -= length(b) * k * 0.6;
-        vShade = fract(sin(dot(root.xz, vec2(12.9898, 78.233))) * 43758.5453);
+        vShade = aTint;
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: `
       varying float vH; varying float vShade;
       void main() {
-        vec3 base = vec3(0.07, 0.2, 0.1), tip = mix(vec3(0.38, 0.62, 0.32), vec3(0.55, 0.7, 0.36), vShade);
-        gl_FragColor = vec4(mix(base, tip, vH), 1.0);
+        vec3 base = vec3(0.04, 0.12, 0.06), tip = mix(vec3(0.3, 0.56, 0.28), vec3(0.62, 0.72, 0.34), vShade);
+        float ao = smoothstep(0.0, 0.45, vH);
+        gl_FragColor = vec4(mix(base, tip, vH) * (0.45 + 0.55 * ao), 1.0);
         #include <colorspace_fragment>
       }`,
   });
-  const N = 9000, grass = new THREE.InstancedMesh(blade, mat, N);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pos = new THREE.Vector3();
-  let n = 0;
-  while (n < N) {
-    const r = Math.sqrt(Math.random()) * 0.65, a = Math.random() * Math.PI * 2;
-    const x = Math.cos(a) * r, z = -0.45 + Math.sin(a) * r * 0.8;
+  // Placement inspired by the Ghost of Tsushima approach (jittered grid + Voronoi clumps), written from scratch here
+  const hash = (x, z) => { const h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return h - Math.floor(h); };
+  const CLUMP = 0.07, clumpAt = (x, z) => {
+    const cx = Math.floor(x / CLUMP), cz = Math.floor(z / CLUMP); let best = null, bd = 1e9;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const gx = cx + dx, gz = cz + dz, px = (gx + hash(gx, gz)) * CLUMP, pz = (gz + hash(gz, gx + 7)) * CLUMP;
+      const d = (px - x) ** 2 + (pz - z) ** 2; if (d < bd) { bd = d; best = { px, pz, id: hash(gx * 3, gz * 5) }; }
+    }
+    return best;
+  };
+  const CELL = 0.0105, blades = [];
+  for (let gx = -62; gx <= 62; gx++) for (let gz = -62; gz <= 62; gz++) {
+    const x = (gx + hash(gx, gz)) * CELL, z = -0.45 + (gz + hash(gz + 3, gx)) * CELL;
+    const rx = x / 0.65, rz = (z + 0.45) / 0.52; if (rx * rx + rz * rz > 1) continue;
     if (Math.abs(x) < 0.225 && Math.abs(z + 0.45) < 0.145) continue;   // keep the book clear
     if (Math.abs(x) < 0.3 && z > -0.33) continue;                          // keep your lap clear so the page stays visible
-    pos.set(x, GRASS_Y, z); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() * Math.PI);
-    const h = 0.6 + Math.random() * 0.8; s.set(1, h, 1);
-    grass.setMatrixAt(n++, m4.compose(pos, q, s));
+    blades.push([x, z]);
   }
+  const N = blades.length, grass = new THREE.InstancedMesh(blade, mat, N);
+  const tint = new Float32Array(N), bend = new Float32Array(N);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pos = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+  blades.forEach(([x, z], n) => {
+    const c = clumpAt(x, z);
+    const face = Math.atan2(x - c.px, z - c.pz) + (hash(x * 91, z * 37) - 0.5) * 1.2;   // clump blades lean outward together
+    pos.set(x, GRASS_Y, z); q.setFromAxisAngle(up, face);
+    s.set(0.8 + hash(z, x) * 0.5, (0.55 + c.id * 0.7) * (0.8 + hash(x * 13, z) * 0.4), 1);
+    grass.setMatrixAt(n, m4.compose(pos, q, s));
+    tint[n] = c.id; bend[n] = 0.3 + hash(x * 7, z * 11) * 0.7;
+  });
+  blade.setAttribute('aTint', new THREE.InstancedBufferAttribute(tint, 1));
+  blade.setAttribute('aBend', new THREE.InstancedBufferAttribute(bend, 1));
   grass.frustumCulled = false; scene.add(grass);
 }
 
