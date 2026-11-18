@@ -26,3 +26,6 @@ A bedtime pop-up storybook that opens on your tray table in VR. Pinch the glowin
 - three.js r170 from a CDN, no build step, GitHub Pages.
 
 Meta VR Start Developer Competition 2026 · Entertainment · New Experience.
+
+## License
+[MIT](LICENSE)
