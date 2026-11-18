@@ -16,6 +16,7 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 50);
 camera.position.set(0, -0.07, -0.08);          // desktop preview only; VR uses the headset pose
 camera.lookAt(0, -0.27, -0.45);
+if (new URLSearchParams(location.search).has('sky')) camera.lookAt(0, 0.6, -2);
 scene.add(camera);
 scene.add(new THREE.HemisphereLight(0x9fb0ff, 0x1a2a1a, 2.2));
 const moonLight = new THREE.DirectionalLight(0xdfe6ff, 1.6); moonLight.position.set(-1, 2, -1); scene.add(moonLight);
@@ -37,7 +38,54 @@ function tex(w, h, draw) {
       x.fillStyle = `rgba(255,248,230,${0.3 + Math.random() * 0.7})`; x.beginPath(); x.arc(Math.random() * w, y, r, 0, 7); x.fill();
     }
   });
-  scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 48, 24), new THREE.MeshBasicMaterial({ map: t, side: THREE.BackSide })));
+  // Volumetric clouds: ray-march a 3D fbm noise slab, Beer-Lambert transmittance + light march toward the moon
+  // (approach learned from tigerabrodi/webgpu-clouds, rewritten here as a WebGL fragment shader for the Quest browser)
+  window.__skyU = { uTime: { value: 0 }, uStars: { value: t } };
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 48, 24), new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, uniforms: window.__skyU,
+    vertexShader: 'varying vec3 vW; varying vec2 vUv; void main(){ vUv = uv; vW = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vW,1.0); }',
+    fragmentShader: `
+      uniform float uTime; uniform sampler2D uStars; varying vec3 vW; varying vec2 vUv;
+      float h(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float n3(vec3 x){ vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+        return mix(mix(mix(h(i), h(i+vec3(1,0,0)), f.x), mix(h(i+vec3(0,1,0)), h(i+vec3(1,1,0)), f.x), f.y),
+                   mix(mix(h(i+vec3(0,0,1)), h(i+vec3(1,0,1)), f.x), mix(h(i+vec3(0,1,1)), h(i+vec3(1,1,1)), f.x), f.y), f.z); }
+      float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++){ s += a * n3(p); p = p * 2.03 + 1.7; a *= 0.5; } return s; }
+      const float B0 = 2.4, B1 = 4.2;
+      float dens(vec3 p){
+        vec3 q = p * 0.32 + vec3(uTime * 0.03, 0.0, uTime * 0.015);
+        float base = fbm(q);
+        float h01 = clamp((p.y - B0) / (B1 - B0), 0.0, 1.0);
+        float shape = smoothstep(0.0, 0.25, h01) * smoothstep(1.0, 0.55, h01);   // rounded bottoms, wispy tops
+        return max(0.0, base * shape - 0.38) * 3.2;
+      }
+      void main(){
+        vec3 sky = texture2D(uStars, vUv).rgb;
+        vec3 ro = cameraPosition, rd = normalize(vW - cameraPosition);
+        if (rd.y > 0.04) {
+          float t0 = (B0 - ro.y) / rd.y, t1 = (B1 - ro.y) / rd.y;
+          const int STEPS = 22; float dt = (t1 - t0) / float(STEPS);
+          vec3 moonDir = normalize(vec3(-0.4, 0.8, -0.5));
+          float T = 1.0; vec3 L = vec3(0.0);
+          for (int i = 0; i < STEPS; i++) {
+            vec3 p = ro + rd * (t0 + (float(i) + 0.5) * dt);
+            float d = dens(p);
+            if (d > 0.01) {
+              float sh = dens(p + moonDir * 0.35) + dens(p + moonDir * 0.8);       // light march: self-shadowing
+              float lightT = exp(-sh * 1.6);
+              vec3 lit = mix(vec3(0.12, 0.12, 0.28), vec3(0.82, 0.84, 1.0), lightT);
+              float a = 1.0 - exp(-d * dt * 1.4);                                   // Beer-Lambert
+              L += T * a * lit; T *= 1.0 - a;
+              if (T < 0.03) break;
+            }
+          }
+          float fade = smoothstep(0.04, 0.25, rd.y);
+          sky = mix(sky, sky * T + L, fade);
+        }
+        gl_FragColor = vec4(sky, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  })));
 }
 
 // ---------- Touchable meadow: grass that sways and parts around your fingers ----------
@@ -174,14 +222,6 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
     st.position.set(-0.95 + Math.cos(a) * 0.43, GRASS_Y + 0.01, -0.75 + Math.sin(a) * 0.43); st.rotation.set(rnd() * 3, rnd() * 3, 0); scene.add(st);
   }
 
-  // Soft drifting clouds
-  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xc9c6e8, transparent: true, opacity: 0.55, depthWrite: false });
-  for (let c = 0; c < (Q.has('noclouds') ? 0 : 7); c++) {
-    const g = new THREE.Group();
-    for (let k = 0; k < 6; k++) { const s = new THREE.Mesh(new THREE.SphereGeometry(0.25 + rnd() * 0.25, 16, 12), cloudMat); s.position.set((k - 2.5) * 0.28, rnd() * 0.15, rnd() * 0.2); s.scale.y = 0.6; g.add(s); }
-    g.position.set(-4 + c * 1.4, 1.6 + rnd() * 1.2, -4.5 - rnd() * 2); scene.add(g); world.clouds.push(g);
-  }
-
   // Fireflies
   const N = 70, ffPos = new Float32Array(N * 3);
   for (let i = 0; i < N; i++) {
@@ -198,7 +238,6 @@ function updateWorld(t, dt) {
   world.ffBase.forEach(([x, y, z, ph], i) => p.setXYZ(i, x + Math.sin(t * 0.4 + ph) * 0.08, y + Math.sin(t * 0.9 + ph * 2) * 0.05, z + Math.cos(t * 0.35 + ph) * 0.08));
   p.needsUpdate = true;
   world.fireflies.material.opacity = 0.75 + 0.25 * Math.sin(t * 2);
-  world.clouds.forEach(c => { c.position.x += dt * 0.05; if (c.position.x > 6) c.position.x = -6; });
 }
 
 // ---------- The book ----------
@@ -590,7 +629,7 @@ const backOut = k => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
 showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
-  grassU.uTime.value = t;
+  grassU.uTime.value = t; window.__skyU.uTime.value = t;
   updateWorld(t, dt);
   updateFlip(dt);
   updateHands();
