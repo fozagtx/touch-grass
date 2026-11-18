@@ -927,14 +927,18 @@ const LIBRARY = [{
       lib.covers.push(c);
       tappable(c, function () {
         if (lib.sel === this) { note(659.25); setTimeout(() => note(783.99, 0.6), 120); pending = st; turnPage(); return; }
-        lib.sel = this; hop(this); [523.25, 659.25].forEach((f, k) => setTimeout(() => note(f, 0.4), k * 90));
-        drawPages(1, 1, 'Tonight: ' + st.title, st.blurb, 'Pinch ' + st.title + ' again to open it.');
+        selectCover(this); hop(this); [523.25, 659.25].forEach((f, k) => setTimeout(() => note(f, 0.4), k * 90));
       });
     });
   },
 }];
 let PAGES = LIBRARY, storyId = 'lib', pending = null, goLib = false;
 const lib = { covers: [], hover: null, sel: null, lastHover: null };
+let lastStory = 'pip'; try { lastStory = localStorage.getItem('tg-last-story') || 'pip'; } catch {}
+function selectCover(c) {
+  lib.sel = c; const st = c.userData.story;
+  drawPages(1, 1, 'Tonight: ' + st.title, st.blurb, 'Pinch ' + st.title + ' again to open it, or pinch another book.');
+}
 function libHover(c) {
   if (c === lib.hover) return; lib.hover = c;
   if (c && actx) { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 1320; g.gain.setValueAtTime(0.03, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.06); o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.07); }
@@ -951,8 +955,8 @@ function updateLibrary(dt) {
 }
 function nextTarget() {
   if (goLib) { goLib = false; return [LIBRARY, 0, 'lib']; }
-  if (pending) { const p = pending; pending = null; return [p.pages, 0, p.id]; }
-  if (PAGES === LIBRARY) { const st = lib.sel ? lib.sel.userData.story : STORY_LIST[0]; return [st.pages, 0, st.id]; }
+  if (pending) { const p = pending; pending = null; lastStory = p.id; try { localStorage.setItem('tg-last-story', p.id); } catch {} return [p.pages, 0, p.id]; }
+  if (PAGES === LIBRARY) { const st = lib.sel ? lib.sel.userData.story : STORY_LIST[0]; lastStory = st.id; try { localStorage.setItem('tg-last-story', st.id); } catch {} return [st.pages, 0, st.id]; }
   if (page + 1 >= PAGES.length) return [LIBRARY, 0, 'lib'];
   return [PAGES, page + 1, storyId];
 }
@@ -963,6 +967,7 @@ function showPage(n) {
   page = n; stage.clear(); pops = []; tappables = []; dim = 0; breath = null; if (holding) breatheEnd();
   PAGES[n].build();
   drawPages(n + 1, PAGES.length, PAGES[n].heading, PAGES[n].text, PAGES[n].hint);
+  if (PAGES === LIBRARY && lib.covers.length) selectCover(lib.covers.find(c => c.userData.story.id === lastStory) || lib.covers[0]);   // one book is always chosen
 }
 // Real page turn: the right page lifts from the spine, curls, and flips over to the left
 let flip = null;
