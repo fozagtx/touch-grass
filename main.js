@@ -172,7 +172,7 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
 }
 
 // ---------- The wider world: 3D trees, a moonlit pond, clouds, fireflies ----------
-const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
+const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null, pond: null, trees: [], leaves: [], rip: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -99, 0)), ripI: 0 };
 {
   const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 64), new THREE.MeshStandardMaterial({ color: 0x173220, roughness: 1 }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(0, GRASS_Y - 0.003, -0.45); scene.add(ground);
@@ -203,14 +203,14 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
   const Q = new URLSearchParams(location.search);
   if (!Q.has('notrees')) [[-1.1, -1.6, 1.0], [1.2, -1.8, 1.2], [-1.9, -0.6, 0.9], [1.9, -0.4, 0.85], [0.2, -2.6, 1.3], [-0.9, -2.8, 1.1]].forEach(([x, z, s]) => {
     const t = new THREE.Group(); branch(t, new THREE.Vector3(), upV.clone(), 0.32 * s, 0.035 * s, 5, rnd);
-    t.position.set(x, GRASS_Y, z); t.rotation.y = rnd() * 6; scene.add(t);
+    t.position.set(x, GRASS_Y, z); t.rotation.y = rnd() * 6; scene.add(t); world.trees.push(t);
   });
 
   // Moonlit pond with animated ripples
   world.pondMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: grassU.uTime }, transparent: true,
+    uniforms: { uTime: grassU.uTime, uRip: { value: world.rip } }, transparent: true,
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform float uTime; varying vec2 vUv;
+    fragmentShader: `uniform float uTime; uniform vec4 uRip[6]; varying vec2 vUv;
       void main(){
         vec2 p = vUv - 0.5; float d = length(p);
         float ring = sin(d * 70.0 - uTime * 1.6) * 0.5 + 0.5;
@@ -219,12 +219,19 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
         vec3 c = mix(deep, lit, ring * ring2 * 0.5 + 0.15);
         float glint = smoothstep(0.09, 0.0, length(p - vec2(-0.08, 0.12))) * (0.7 + 0.3 * sin(uTime * 3.0 + d * 40.0));
         c += vec3(1.0, 0.95, 0.75) * glint;
+        for (int i = 0; i < 6; i++) {                       // touch ripples: expanding rings from where you touched
+          float age = uTime - uRip[i].z; if (age < 0.0 || age > 3.5) continue;
+          float dd = length(vUv - uRip[i].xy), front = age * 0.16;
+          float band = exp(-pow((dd - front) * 40.0, 2.0));
+          float w = sin((dd - front) * 160.0) * band * exp(-age * 1.1) * uRip[i].w;
+          c += vec3(0.55, 0.65, 0.9) * max(0.0, w) * 0.9;
+        }
         float edge = smoothstep(0.5, 0.46, d);
         gl_FragColor = vec4(c, edge);
         #include <colorspace_fragment>
       }`,
   });
-  const pond = new THREE.Mesh(new THREE.CircleGeometry(0.42, 48), world.pondMat);
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(0.42, 48), world.pondMat); world.pond = pond;
   pond.rotation.x = -Math.PI / 2; pond.position.set(-0.95, GRASS_Y + 0.001, -0.75); scene.add(pond);
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6a6f78, roughness: 1, flatShading: true });
   for (let i = 0; i < 14; i++) {
@@ -243,7 +250,54 @@ const world = { fireflies: null, ffBase: [], clouds: [], pondMat: null };
   world.fireflies = new THREE.Points(ffGeo, new THREE.PointsMaterial({ size: 0.035, map: ffTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
   scene.add(world.fireflies);
 }
+// ---------- Touch the water and the trees ----------
+function ripple(uv, strength = 1) {
+  const r = world.rip[world.ripI++ % world.rip.length]; r.set(uv.x, uv.y, grassU.uTime.value, strength);
+}
+function plop() {
+  actx ??= new AudioContext();
+  const o = actx.createOscillator(), g = actx.createGain(); o.type = 'sine';
+  o.frequency.setValueAtTime(900, actx.currentTime); o.frequency.exponentialRampToValueAtTime(180, actx.currentTime + 0.18);
+  g.gain.setValueAtTime(0.18, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.3);
+  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.3);
+}
+function rustle() {
+  actx ??= new AudioContext();
+  const len = actx.sampleRate * 0.9, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) { const k = i / len; d[i] = (Math.random() * 2 - 1) * Math.pow(Math.sin(Math.PI * k), 2) * (0.5 + 0.5 * Math.random()); }
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 3200; f.Q.value = 0.6;
+  const g = actx.createGain(); g.gain.value = 0.25; src.connect(f).connect(g).connect(actx.destination); src.start();
+}
+const leafGeoF = new THREE.PlaneGeometry(0.045, 0.03);
+const leafMatF = [0x7fcf6a, 0xa6d86b, 0xf0c25a].map(c => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+function shakeTree(tree) {
+  tree.userData.shake = 1; rustle();
+  const box = new THREE.Box3().setFromObject(tree), top = box.max.y;
+  for (let i = 0; i < 14; i++) {
+    const l = new THREE.Mesh(leafGeoF, leafMatF[i % 3]);
+    l.position.set(box.min.x + Math.random() * (box.max.x - box.min.x), top - Math.random() * 0.3, box.min.z + Math.random() * (box.max.z - box.min.z));
+    l.userData = { vy: -0.08 - Math.random() * 0.08, ph: Math.random() * 6, spin: (Math.random() - 0.5) * 6 };
+    scene.add(l); world.leaves.push(l);
+  }
+}
+function touchWorld(origin, dir) {
+  const r = new THREE.Raycaster(origin, dir.clone().normalize(), 0, 8);
+  const hits = r.intersectObjects([world.pond, ...world.trees], true);
+  if (!hits.length) return false;
+  const h = hits[0];
+  if (h.object === world.pond) { ripple(h.uv, 1); plop(); return true; }
+  let o = h.object; while (o && !world.trees.includes(o)) o = o.parent;
+  if (o) { shakeTree(o); return true; }
+  return false;
+}
+
 function updateWorld(t, dt) {
+  world.trees.forEach(tr => { const k = tr.userData.shake || 0; if (k > 0) { tr.userData.shake = Math.max(0, k - dt * 1.2); tr.rotation.z = Math.sin(t * 22) * 0.035 * k; tr.rotation.x = Math.cos(t * 17) * 0.02 * k; } });
+  world.leaves = world.leaves.filter(l => {
+    const u = l.userData; l.position.y += u.vy * dt; l.position.x += Math.sin(t * 2 + u.ph) * dt * 0.06; l.rotation.x += u.spin * dt; l.rotation.z += u.spin * 0.5 * dt;
+    if (l.position.y < GRASS_Y + 0.005) { scene.remove(l); return false; } return true;
+  });
   const p = world.fireflies.geometry.attributes.position;
   world.ffBase.forEach(([x, y, z, ph], i) => p.setXYZ(i, x + Math.sin(t * 0.4 + ph) * 0.08, y + Math.sin(t * 0.9 + ph * 2) * 0.05, z + Math.cos(t * 0.35 + ph) * 0.08));
   p.needsUpdate = true;
@@ -713,7 +767,7 @@ const hands = [0, 1].map(i => {
   tip.visible = false; scene.add(tip);
   return { hand, tip, pinching: false };
 });
-let penOwner = null;
+let penOwner = null; const t0 = () => grassU.uTime.value;
 function updateHands() {
   hands.forEach((h, i) => (h.slot = i ? grassU.uH1 : grassU.uH0));
   for (const h of hands) {
@@ -724,12 +778,17 @@ function updateHands() {
     h.slot.value.copy(palm && palm.visible ? palm.getWorldPosition(new THREE.Vector3()).lerp(a, 0.5) : a);
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
+    if (world.pond) { const lp = world.pond.worldToLocal(a.clone()); if (Math.hypot(lp.x, lp.y) < 0.42 && Math.abs(lp.z) < 0.02 && (!h.lastRip || t0() - h.lastRip > 0.25)) { h.lastRip = t0(); ripple(new THREE.Vector2(lp.x / 0.84 + 0.5, lp.y / 0.84 + 0.5), 0.8); } }
     const cp = !h.pinching && pageCanvasPoint(a);
     if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
     else if (penOwner === h) { pen.visible = false; penOwner = null; }
     if (!h.pinching && d < 0.02) {
       h.pinching = true; const hit = hitObject(p);
-      if (!hit && breath) { h.breathing = true; breatheStart(); } else activate(hit);
+      if (hit) activate(hit);
+      else {
+        const eye = renderer.xr.getCamera().getWorldPosition(new THREE.Vector3());
+        if (!touchWorld(eye, p.clone().sub(eye)) && breath) { h.breathing = true; breatheStart(); }
+      }
     } else if (h.pinching && d > 0.035) { h.pinching = false; if (h.breathing) { h.breathing = false; breatheEnd(); } }
   }
 }
@@ -740,6 +799,7 @@ renderer.domElement.addEventListener('pointerdown', e => {
   if (ray.intersectObject(corner).length) return turnPage();
   const hit = ray.intersectObjects(tappables, false)[0];
   if (hit) hit.object.userData.onPinch.call(hit.object);
+  else if (touchWorld(ray.ray.origin, ray.ray.direction)) {}
   else if (breath) breatheStart();
 });
 addEventListener('pointerup', () => { if (holding) breatheEnd(); });
@@ -748,6 +808,8 @@ const grassPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(GRASS_Y + 0.02)
 renderer.domElement.addEventListener('pointermove', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
+  const ph = world.pond && ray.intersectObject(world.pond)[0];
+  if (ph && (!world.lastHover || t0() - world.lastHover > 0.3)) { world.lastHover = t0(); ripple(ph.uv, 0.6); }
   const hit = ray.intersectObject(left.m)[0];
   if (hit && !renderer.xr.isPresenting) {
     pen.visible = true; pen.position.copy(hit.point);
