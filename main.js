@@ -100,7 +100,7 @@ function tex(w, h, draw) {
 
 // ---------- Touchable meadow: grass that sways and parts around your fingers ----------
 const GRASS_Y = -0.326;
-const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }, uH1: { value: new THREE.Vector3(9, 9, 9) }, uH2: { value: new THREE.Vector3(9, 9, 9) } };
+const grassU = { uWind: { value: 0 }, uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }, uH1: { value: new THREE.Vector3(9, 9, 9) }, uH2: { value: new THREE.Vector3(9, 9, 9) } };
 {
   const ground = new THREE.Mesh(new THREE.CircleGeometry(0.7, 48), new THREE.MeshBasicMaterial({ color: 0x1c3a24 }));
   ground.rotation.x = -Math.PI / 2; ground.position.set(0, GRASS_Y - 0.001, -0.45); scene.add(ground);
@@ -108,7 +108,7 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
   const mat = new THREE.ShaderMaterial({
     uniforms: grassU, side: THREE.DoubleSide,
     vertexShader: `
-      uniform float uTime; uniform vec3 uH0, uH1, uH2; attribute float aTint; attribute float aBend; varying float vH; varying float vShade;
+      uniform float uTime; uniform float uWind; uniform vec3 uH0, uH1, uH2; attribute float aTint; attribute float aBend; varying float vH; varying float vShade;
       vec2 push(vec3 h, vec3 root, float k) {
         vec2 d = root.xz - h.xz; float dist = length(d) + 1e-4;
         float near = (1.0 - smoothstep(0.0, 0.07, dist)) * (1.0 - smoothstep(0.0, 0.08, abs(h.y - root.y - 0.02)));
@@ -121,7 +121,8 @@ const grassU = { uTime: { value: 0 }, uH0: { value: new THREE.Vector3(9, 9, 9) }
         vec4 root = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
         vec4 w = instanceMatrix * vec4(p, 1.0);
         float k = uv.y * uv.y;
-        w.x += sin(uTime * 1.3 + root.x * 9.0 + root.z * 7.0) * 0.006 * k;
+        float gust = uWind * (0.6 + 0.4 * sin(uTime * 2.2 - root.x * 6.0));            // gust rolls across the meadow
+        w.x += sin(uTime * 1.3 + root.x * 9.0 + root.z * 7.0) * 0.006 * k * (1.0 + uWind * 2.0) + gust * 0.014 * k;
         w.z += cos(uTime * 1.1 + root.x * 6.0) * 0.004 * k;
         vec2 b = push(uH0, root.xyz, 0.035) + push(uH1, root.xyz, 0.035) + push(uH2, root.xyz, 0.035);
         w.xz += b * k; w.y -= length(b) * k * 0.6;
@@ -402,7 +403,40 @@ function touchWorld(origin, dir) {
   return false;
 }
 
+// ---------- Wind gusts ----------
+const wind = { level: 0, target: 0, next: 4 + Math.random() * 4, holdUntil: 0, src: null, gain: null, filt: null };
+function windSound() {
+  if (wind.src || !actx) return;
+  const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  let b = 0; for (let i = 0; i < len; i++) { b = b * 0.985 + (Math.random() * 2 - 1) * 0.015; d[i] = b * 10; }
+  const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500; f.Q.value = 0.9;
+  const g = actx.createGain(); g.gain.value = 0; src.connect(f).connect(g).connect(actx.destination); src.start();
+  wind.src = src; wind.gain = g; wind.filt = f;
+}
+function updateWind(t, dt) {
+  if (t > wind.next) { wind.target = 0.6 + Math.random() * 0.4; wind.holdUntil = t + 2 + Math.random() * 2.5; wind.next = t + 6 + Math.random() * 8; }
+  if (t > wind.holdUntil) wind.target = 0;
+  wind.level += (wind.target - wind.level) * Math.min(1, dt * (wind.target > wind.level ? 0.9 : 0.45));
+  grassU.uWind.value = wind.level;
+  windSound();
+  if (wind.gain) { wind.gain.gain.setTargetAtTime(wind.level * 0.11, actx.currentTime, 0.3); wind.filt.frequency.setTargetAtTime(350 + wind.level * 900, actx.currentTime, 0.4); }
+  // trees sway with the gust; strong gusts shake a few leaves loose
+  world.trees.forEach((tr, i) => {
+    const u = tr.userData; if (u.grab) return;
+    u.vz += wind.level * (0.9 + 0.6 * Math.sin(t * 1.7 + i * 1.3)) * 1.1 * dt;
+    u.vx += wind.level * Math.cos(t * 1.3 + i) * 0.4 * dt;
+    if (wind.level > 0.55 && Math.random() < dt * 1.2) {
+      const box = new THREE.Box3().setFromObject(tr), l = new THREE.Mesh(leafGeoF, leafMatF[i % 3]);
+      l.position.set(box.min.x + Math.random() * (box.max.x - box.min.x), box.max.y - Math.random() * 0.25, box.min.z + Math.random() * (box.max.z - box.min.z));
+      l.userData = { vy: 0.02, vx: -0.25 * wind.level, vz: 0.05 * (Math.random() - 0.5), g: true, ph: Math.random() * 6, spin: (Math.random() - 0.5) * 8 };
+      scene.add(l); world.leaves.push(l);
+    }
+  });
+}
+
 function updateWorld(t, dt) {
+  updateWind(t, dt);
   world.trees.forEach(tr => {
     const u = tr.userData;
     if (u.grab) { u.bz += (u.grab.tz - u.bz) * Math.min(1, dt * 12); u.bx += (u.grab.tx - u.bx) * Math.min(1, dt * 12); u.vx = u.vz = 0; }
@@ -926,7 +960,7 @@ const LIBRARY = [{
       c.add(glow); c.userData.glow = glow; c.userData.story = st; c.userData.lib = { s: 1, y: 0 };
       lib.covers.push(c);
       tappable(c, function () {
-        if (lib.sel === this) { note(659.25); setTimeout(() => note(783.99, 0.6), 120); pending = st; turnPage(); return; }
+        if (lib.sel === this && (lib.hover === this || renderer.xr.isPresenting)) { note(659.25); setTimeout(() => note(783.99, 0.6), 120); pending = st; turnPage(); return; }
         selectCover(this); hop(this); [523.25, 659.25].forEach((f, k) => setTimeout(() => note(f, 0.4), k * 90));
       });
     });
@@ -937,10 +971,11 @@ const lib = { covers: [], hover: null, sel: null, lastHover: null };
 let lastStory = 'pip'; try { lastStory = localStorage.getItem('tg-last-story') || 'pip'; } catch {}
 function selectCover(c) {
   lib.sel = c; const st = c.userData.story;
-  drawPages(1, 1, 'Tonight: ' + st.title, st.blurb, 'Pinch ' + st.title + ' again to open it, or pinch another book.');
+  drawPages(1, 1, 'Tonight: ' + st.title, st.blurb, 'Pinch ' + st.title + ' to open it, or move to another book.');
 }
 function libHover(c) {
   if (c === lib.hover) return; lib.hover = c;
+  if (c && c !== lib.sel) selectCover(c);   // hovering a book makes it the active one; the rest go inactive
   if (c && actx) { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 1320; g.gain.setValueAtTime(0.03, actx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.06); o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.07); }
 }
 function updateLibrary(dt) {
