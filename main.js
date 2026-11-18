@@ -15,8 +15,18 @@ document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 50);
 camera.position.set(0, -0.07, -0.08);          // desktop preview only; VR uses the headset pose
-camera.lookAt(0, -0.27, -0.45);
-if (new URLSearchParams(location.search).has('sky')) camera.lookAt(0, 0.6, -2);
+camera.rotation.order = 'YXZ';
+const look = { yaw: 0, pitch: -0.496, ty: 0, tp: -0.496 };
+if (new URLSearchParams(location.search).has('sky')) look.tp = 0.45;
+camera.rotation.set(look.pitch, look.yaw, 0);
+addEventListener('wheel', e => { look.tp = Math.max(-0.95, Math.min(1.1, look.tp - e.deltaY * 0.0016)); look.ty = Math.max(-1.3, Math.min(1.3, look.ty - e.deltaX * 0.0016)); }, { passive: true });
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp') look.tp = Math.min(1.1, look.tp + 0.15); if (e.key === 'ArrowDown') look.tp = Math.max(-0.95, look.tp - 0.15);
+  if (e.key === 'ArrowLeft') look.ty = Math.min(1.3, look.ty + 0.15); if (e.key === 'ArrowRight') look.ty = Math.max(-1.3, look.ty - 0.15);
+});
+addEventListener('DOMContentLoaded', () => {});
+const skyBtn = document.getElementById('skybtn');
+if (skyBtn) skyBtn.addEventListener('click', () => { const up = look.tp > 0; look.tp = up ? -0.496 : 0.45; look.ty = 0; skyBtn.textContent = up ? '☁  Look at the sky' : '📖  Back to the book'; });
 scene.add(camera);
 scene.add(new THREE.HemisphereLight(0x9fb0ff, 0x1a2a1a, 2.2));
 const moonLight = new THREE.DirectionalLight(0xdfe6ff, 1.6); moonLight.position.set(-1, 2, -1); scene.add(moonLight);
@@ -251,40 +261,114 @@ const glow = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.7), new THREE.MeshBas
   }),
 }));
 glow.rotation.x = -Math.PI / 2; glow.position.y = -0.012; BOOK.add(glow);
-const coverMat = new THREE.MeshBasicMaterial({ color: 0x6a2c4f });
-const cover = new THREE.Mesh(new THREE.BoxGeometry(PW * 2 + 0.024, 0.008, PD + 0.024), coverMat); cover.position.y = -0.006; BOOK.add(cover);
-const block = new THREE.Mesh(new THREE.BoxGeometry(PW * 2, 0.006, PD), new THREE.MeshBasicMaterial({ color: 0xe9dcc0 })); block.position.y = -0.002; BOOK.add(block);
+// Leather cloth cover with grain and a gold-tooled border
+const leather = tex(1024, 640, (x, w, h) => {
+  x.fillStyle = '#5b2140'; x.fillRect(0, 0, w, h);
+  const id = x.getImageData(0, 0, w, h), d = id.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 26; d[i] += n; d[i + 1] += n * 0.6; d[i + 2] += n * 0.8; }
+  x.putImageData(id, 0, 0);
+  for (let i = 0; i < 2500; i++) { x.strokeStyle = `rgba(0,0,0,${Math.random() * 0.12})`; x.lineWidth = 1; const a = Math.random() * w, b = Math.random() * h; x.beginPath(); x.moveTo(a, b); x.lineTo(a + (Math.random() - 0.5) * 18, b + (Math.random() - 0.5) * 18); x.stroke(); }
+  const v = x.createRadialGradient(w / 2, h / 2, h * 0.2, w / 2, h / 2, w * 0.7); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.45)'); x.fillStyle = v; x.fillRect(0, 0, w, h);
+  x.strokeStyle = 'rgba(214,176,100,.85)'; x.lineWidth = 5; x.strokeRect(22, 22, w - 44, h - 44); x.lineWidth = 2; x.strokeRect(36, 36, w - 72, h - 72);
+});
+const coverMat = new THREE.MeshBasicMaterial({ map: leather });
+const cover = new THREE.Mesh(new THREE.BoxGeometry(PW * 2 + 0.036, 0.005, PD + 0.03), coverMat); cover.position.y = -0.0035; BOOK.add(cover);
+// Page block: stacked page edges on the sides
+const edges = tex(512, 64, (x, w, h) => {
+  x.fillStyle = '#efe4c8'; x.fillRect(0, 0, w, h);
+  for (let y = 0; y < h; y += 2) { x.fillStyle = `rgba(120,95,60,${0.08 + Math.random() * 0.14})`; x.fillRect(0, y, w, 1); }
+});
+const edgeMat = new THREE.MeshBasicMaterial({ map: edges }), plainMat = new THREE.MeshBasicMaterial({ color: 0xefe4c8 });
+const block = new THREE.Mesh(new THREE.BoxGeometry(PW * 2, 0.01, PD), [edgeMat, edgeMat, plainMat, plainMat, edgeMat, edgeMat]); block.position.y = -0.0035; block.scale.y = 0.95; BOOK.add(block);
+// Paper grain, generated once and laid over every page
+const GRAIN = document.createElement('canvas'); GRAIN.width = 800; GRAIN.height = 1040;
+{
+  const g = GRAIN.getContext('2d'), id = g.createImageData(800, 1040), d = id.data;
+  for (let i = 0; i < d.length; i += 4) { const n = 128 + (Math.random() - 0.5) * 38; d[i] = d[i + 1] = d[i + 2] = n; d[i + 3] = 255; }
+  g.putImageData(id, 0, 0);
+  for (let i = 0; i < 900; i++) { g.strokeStyle = `rgba(90,70,40,${Math.random() * 0.25})`; g.lineWidth = 0.6; const a = Math.random() * 800, b = Math.random() * 1040, r = Math.random() * 6.28; g.beginPath(); g.moveTo(a, b); g.lineTo(a + Math.cos(r) * 14, b + Math.sin(r) * 14); g.stroke(); }
+}
 
 function pageMesh(x, spineLeft) {
   const c = document.createElement('canvas'); c.width = 800; c.height = 1040;
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD), new THREE.MeshBasicMaterial({ map: t }));
+  const geo = new THREE.PlaneGeometry(PW, PD, 32, 1), pa = geo.attributes.position;
+  for (let i = 0; i < pa.count; i++) { const u = spineLeft ? (pa.getX(i) + PW / 2) / PW : (PW / 2 - pa.getX(i)) / PW; pa.setZ(i, 0.005 * (1 - Math.exp(-u * 9)) - 0.001 * u); }
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: t }));
   m.rotation.x = -Math.PI / 2; m.position.set(x, 0.0012, 0); BOOK.add(m);
-  return { c, ctx: c.getContext('2d'), t, spineLeft };
+  return { c, ctx: c.getContext('2d'), t, spineLeft, m, lines: [] };
 }
 const left = pageMesh(-PW / 2, false), right = pageMesh(PW / 2, true);
 function paper(p) {
-  const x = p.ctx; x.fillStyle = '#f7eedb'; x.fillRect(0, 0, 800, 1040);
-  const g = x.createLinearGradient(p.spineLeft ? 0 : 800, 0, p.spineLeft ? 120 : 680, 0);
-  g.addColorStop(0, 'rgba(120,90,60,.28)'); g.addColorStop(1, 'rgba(120,90,60,0)'); x.fillStyle = g; x.fillRect(0, 0, 800, 1040);
+  const x = p.ctx; x.fillStyle = '#f5ead2'; x.fillRect(0, 0, 800, 1040);
+  x.save(); x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.55; x.drawImage(GRAIN, 0, 0); x.restore();
+  const g = x.createLinearGradient(p.spineLeft ? 0 : 800, 0, p.spineLeft ? 160 : 640, 0);
+  g.addColorStop(0, 'rgba(90,60,30,.38)'); g.addColorStop(1, 'rgba(90,60,30,0)'); x.fillStyle = g; x.fillRect(0, 0, 800, 1040);
+  const v = x.createRadialGradient(400, 520, 300, 400, 520, 720); v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(110,80,40,.18)'); x.fillStyle = v; x.fillRect(0, 0, 800, 1040);
 }
-function wrap(ctx, text, x, y, w, lh) {
+function wrap(ctx, text, x, y, w, lh, out) {
+  const put = (line) => { ctx.fillText(line, x, y); if (out) out.push({ x, y, w: ctx.measureText(line).width, lh }); };
   for (const para of text.split('\n')) {
     let line = '';
     for (const word of para.split(' ')) {
       const t = line ? line + ' ' + word : word;
-      if (ctx.measureText(t).width > w) { ctx.fillText(line, x, y); y += lh; line = word; } else line = t;
+      if (ctx.measureText(t).width > w) { put(line); y += lh; line = word; } else line = t;
     }
-    ctx.fillText(line, x, y); y += lh * 1.35;
+    put(line); y += lh * 1.35;
   }
 }
-function drawPages(n, total, heading, text, hint) {
+const marks = {};   // page -> { lineIndex: [x0, x1] }  highlighter strokes persist per page
+let cur = null;
+function drawLeft() {
+  if (!cur) return;
   paper(left); const L = left.ctx;
-  L.fillStyle = '#a0526e'; L.font = '600 34px Georgia, serif'; L.fillText(heading.toUpperCase(), 70, 110);
+  L.fillStyle = '#a0526e'; L.font = '600 34px Georgia, serif'; L.fillText(cur.heading.toUpperCase(), 70, 110);
   L.fillStyle = '#d9b46a'; L.fillRect(70, 130, 90, 4);
-  L.fillStyle = '#33223a'; L.font = '46px Georgia, serif'; wrap(L, text, 70, 220, 660, 66);
-  L.fillStyle = '#a08a7a'; L.font = 'italic 30px Georgia, serif'; L.textAlign = 'center'; L.fillText(`~ ${n} ~`, 400, 985); L.textAlign = 'left';
+  // measure lines first (invisible pass) so highlights sit under the ink
+  L.font = '46px Georgia, serif'; const lines = []; L.save(); L.fillStyle = 'rgba(0,0,0,0)'; wrap(L, cur.text, 70, 220, 660, 66, lines); L.restore();
+  left.lines = lines;
+  const pm = marks[page] || {};
+  L.save(); L.globalCompositeOperation = 'multiply';
+  for (const k in pm) { const ln = lines[k]; if (!ln) continue; const [a, b] = pm[k];
+    L.fillStyle = 'rgba(255,214,70,.75)'; L.beginPath(); L.roundRect(a, ln.y - ln.lh * 0.72, b - a, ln.lh * 0.86, 10); L.fill(); }
+  L.restore();
+  L.fillStyle = '#33223a'; L.font = '46px Georgia, serif'; wrap(L, cur.text, 70, 220, 660, 66);
+  L.fillStyle = '#a08a7a'; L.font = 'italic 30px Georgia, serif'; L.textAlign = 'center'; L.fillText(`~ ${cur.n} ~`, 400, 985); L.textAlign = 'left';
   left.t.needsUpdate = true;
+}
+function highlightAt(cx, cy) {
+  const ln = left.lines.findIndex(l => cy > l.y - l.lh * 0.8 && cy < l.y + l.lh * 0.25 && cx > l.x - 12 && cx < l.x + l.w + 12);
+  if (ln < 0) return false;
+  const pm = (marks[page] ??= {}), l = left.lines[ln];
+  const a = Math.max(l.x - 6, cx - 16), b = Math.min(l.x + l.w + 6, cx + 16);
+  const r = pm[ln]; if (r && a >= r[0] && b <= r[1]) return true;
+  pm[ln] = r ? [Math.min(r[0], a), Math.max(r[1], b)] : [a, b];
+  drawLeft(); markerSound(); return true;
+}
+let lastMark = 0;
+function markerSound() {
+  const now = performance.now(); if (now - lastMark < 90 || !actx) return; lastMark = now;
+  const len = actx.sampleRate * 0.08, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * i / len);
+  const src = actx.createBufferSource(); src.buffer = buf; const f = actx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 2500;
+  const g = actx.createGain(); g.gain.value = 0.05; src.connect(f).connect(g).connect(actx.destination); src.start();
+}
+// A pencil-style highlighter pen that follows your fingertip (VR) or the mouse (desktop)
+const pen = new THREE.Group();
+{
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 0.09, 12), new THREE.MeshStandardMaterial({ color: 0xffd24a, roughness: 0.5 })); body.position.y = 0.055; pen.add(body);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.0036, 0.0036, 0.012, 12), new THREE.MeshStandardMaterial({ color: 0x3a3a3a })); cap.position.y = 0.104; pen.add(cap);
+  const tipM = new THREE.Mesh(new THREE.ConeGeometry(0.0035, 0.01, 12), new THREE.MeshStandardMaterial({ color: 0xffe27a })); tipM.rotation.x = Math.PI; tipM.position.y = 0.005; pen.add(tipM);
+  pen.rotation.set(0.5, 0, -0.35); pen.visible = false; scene.add(pen);
+}
+function pageCanvasPoint(worldP) {
+  const l = left.m.worldToLocal(worldP.clone());
+  if (Math.abs(l.x) > PW / 2 || Math.abs(l.y) > PD / 2 || l.z < -0.006 || l.z > 0.022) return null;
+  return [(l.x / PW + 0.5) * 800, (1 - (l.y / PD + 0.5)) * 1040];
+}
+function drawPages(n, total, heading, text, hint) {
+  cur = { n, total, heading, text }; drawLeft();
   paper(right); const R = right.ctx;
   R.fillStyle = 'rgba(160,82,110,.12)'; R.beginPath(); R.roundRect(50, 880, 700, 110, 24); R.fill();
   R.fillStyle = '#7a3e58'; R.font = 'italic 36px Georgia, serif'; wrap(R, '✋ ' + hint, 80, 945, 640, 44);
@@ -294,10 +378,10 @@ function drawPages(n, total, heading, text, hint) {
 // Page corner: a folded, glowing dog-ear you pinch to turn
 const corner = new THREE.Mesh(new THREE.CircleGeometry(0.014, 3), new THREE.MeshBasicMaterial({ color: 0xffc977, side: THREE.DoubleSide }));
 corner.rotation.x = -Math.PI / 2; corner.rotation.z = Math.PI / 4;
-corner.position.set(PW - 0.012, 0.004, PD / 2 - 0.012); BOOK.add(corner);
+corner.position.set(PW - 0.012, 0.0075, PD / 2 - 0.012); BOOK.add(corner);
 
 // ---------- Paper cut-outs that fold up off the page ----------
-const stage = new THREE.Group(); stage.position.set(PW / 2, 0.002, 0); BOOK.add(stage);
+const stage = new THREE.Group(); stage.position.set(PW / 2, 0.005, 0); BOOK.add(stage);
 let pops = [], tappables = [];
 const EDGE = '#fffaf0';
 function cutout(w, h, draw, { flat = false } = {}) {
@@ -575,9 +659,9 @@ function turnPage() {
   const sheet = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: front, side: THREE.FrontSide }));
   const back = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xefe4cc, side: THREE.BackSide }));
   for (const m of [sheet, back]) { m.rotation.x = -Math.PI / 2; m.position.x = PW / 2; g.add(m); }
-  stage.visible = false;
+  pops.forEach(m => (m.userData.fold = 1));   // old scene folds back down into the page
   flip = { g, geo, p: 0, swapped: false, base: Float32Array.from(geo.attributes.position.array) };
-  setTimeout(() => paperThump(), 780);
+  setTimeout(() => paperThump(), 1150);
 }
 function paperSwish() {
   actx ??= new AudioContext();
@@ -598,7 +682,7 @@ function paperThump() {
 }
 function updateFlip(dt) {
   if (!flip) return;
-  const f = flip; f.p = Math.min(1, f.p + dt * 1.25);
+  const f = flip; f.p = Math.min(1, f.p + dt * 0.85);
   const e = f.p < 0.5 ? 2 * f.p * f.p : 1 - Math.pow(-2 * f.p + 2, 2) / 2;   // ease in-out
   f.g.rotation.z = e * Math.PI;
   const pos = f.geo.attributes.position, lift = Math.sin(e * Math.PI);
@@ -607,7 +691,7 @@ function updateFlip(dt) {
     pos.setZ(i, lift * 0.05 * u * u - lift * 0.02 * u);                      // paper curl
   }
   pos.needsUpdate = true;
-  if (!f.swapped && f.p > 0.5) { f.swapped = true; showPage((page + 1) % PAGES.length); stage.visible = true; }
+  if (!f.swapped && f.p > 0.5) { f.swapped = true; showPage((page + 1) % PAGES.length); }
   if (f.p >= 1) { BOOK.remove(f.g); f.geo.dispose(); flip = null; }
 }
 
@@ -629,6 +713,7 @@ const hands = [0, 1].map(i => {
   tip.visible = false; scene.add(tip);
   return { hand, tip, pinching: false };
 });
+let penOwner = null;
 function updateHands() {
   hands.forEach((h, i) => (h.slot = i ? grassU.uH1 : grassU.uH0));
   for (const h of hands) {
@@ -639,6 +724,9 @@ function updateHands() {
     h.slot.value.copy(palm && palm.visible ? palm.getWorldPosition(new THREE.Vector3()).lerp(a, 0.5) : a);
     const p = a.clone().add(b).multiplyScalar(0.5), d = a.distanceTo(b);
     h.tip.visible = true; h.tip.position.copy(p);
+    const cp = !h.pinching && pageCanvasPoint(a);
+    if (cp) { pen.visible = true; pen.position.copy(a); penOwner = h; highlightAt(cp[0], cp[1]); }
+    else if (penOwner === h) { pen.visible = false; penOwner = null; }
     if (!h.pinching && d < 0.02) {
       h.pinching = true; const hit = hitObject(p);
       if (!hit && breath) { h.breathing = true; breatheStart(); } else activate(hit);
@@ -660,6 +748,12 @@ const grassPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(GRASS_Y + 0.02)
 renderer.domElement.addEventListener('pointermove', e => {
   ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   ray.ray.intersectPlane(grassPlane, grassU.uH2.value) || grassU.uH2.value.set(9, 9, 9);
+  const hit = ray.intersectObject(left.m)[0];
+  if (hit && !renderer.xr.isPresenting) {
+    pen.visible = true; pen.position.copy(hit.point);
+    const cx = hit.uv.x * 800, cy = (1 - hit.uv.y) * 1040;
+    renderer.domElement.style.cursor = highlightAt(cx, cy) || left.lines.some(l => cy > l.y - l.lh && cy < l.y + l.lh * 0.3) ? 'none' : 'none';
+  } else if (!renderer.xr.isPresenting) { pen.visible = false; renderer.domElement.style.cursor = ''; }
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -670,6 +764,7 @@ showPage(0);
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
   grassU.uTime.value = t; window.__skyU.uTime.value = t;
+  if (!renderer.xr.isPresenting) { look.pitch += (look.tp - look.pitch) * Math.min(1, dt * 4); look.yaw += (look.ty - look.yaw) * Math.min(1, dt * 4); camera.rotation.set(look.pitch, look.yaw, 0); }
   updateWorld(t, dt);
   updateFlip(dt);
   updateSkyToys(t);
@@ -677,9 +772,10 @@ renderer.setAnimationLoop(() => {
   updateBreath(dt);
   for (const m of pops) {
     const u = m.userData;
+    if (u.fold !== undefined) { u.fold = Math.max(0, u.fold - dt * 2.6); if (!u.flat) m.rotation.x = -Math.PI / 2 * (1 - u.fold * u.fold); m.position.y = (u.baseY || 0) * u.fold; continue; }
     if (u.rise) { m.position.y += dt * 0.03; m.position.x += Math.sin(t * 2 + m.id) * dt * 0.005; continue; }
     // fold up from the page like paper engineering
-    if (u.popT < 1) { u.popT += dt * 1.6; const k = Math.max(0, Math.min(1, u.popT)); const target = u.flat ? -Math.PI / 2 : 0; m.rotation.x = -Math.PI / 2 + (target + Math.PI / 2) * (u.flat ? k : backOut(k)); }
+    if (u.popT < 1) { u.popT += dt * 1.25; const k = Math.max(0, Math.min(1, u.popT)); const target = u.flat ? -Math.PI / 2 : 0; m.rotation.x = -Math.PI / 2 + (target + Math.PI / 2) * (u.flat ? k : backOut(k)); }
     let y = u.baseY + (u.lift && u.popT >= 0 ? u.lift * Math.min(1, u.popT) : 0);
     if (u.hop) { u.hop = Math.max(0, u.hop - dt * 3); y += Math.sin(u.hop * Math.PI) * 0.015; }
     if (u.drift) { u.drift += dt; m.position.x = Math.min(0.2, (u.drift - 1) * 0.08); y += (u.drift - 1) * 0.02; }
