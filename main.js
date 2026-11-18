@@ -600,9 +600,49 @@ peelShadow.rotation.x = -Math.PI / 2; peelShadow.position.set(PW - CR / 2, 0.005
 const peelUnder = new THREE.Mesh(new THREE.PlaneGeometry(CR, CR), new THREE.MeshBasicMaterial({ map: tex(128, 128, (x, w, h) => { x.fillStyle = '#f3e7cc'; x.fillRect(0, 0, w, h); x.save(); x.globalCompositeOperation = 'overlay'; x.globalAlpha = 0.5; x.drawImage(GRAIN, 0, 0, 160, 160, 0, 0, w, h); x.restore(); }) }));
 peelUnder.rotation.x = -Math.PI / 2; peelUnder.position.set(PW - CR / 2, 0.0056, PD / 2 - CR / 2); BOOK.add(peelUnder);
 let peelAmt = 0.3, peelTarget = 0.3, cornerNear = false;
+// A paper-cut helper hand that shows how to turn the page: reach, pinch the corner, pull, let go
+function drawHand(x, w, h, pinched) {
+  const skin = '#f4c9a0', edge = '#fffaf0', line = '#b07a5a';
+  x.lineJoin = 'round'; x.lineCap = 'round';
+  const shape = (path, fill) => { x.beginPath(); path(); x.lineWidth = 14; x.strokeStyle = edge; x.stroke(); x.fillStyle = fill; x.fill(); x.lineWidth = 4; x.strokeStyle = line; x.stroke(); };
+  // sleeve
+  shape(() => { x.roundRect(w * 0.56, h * 0.62, w * 0.34, h * 0.3, 18); }, '#7a9cd6');
+  // palm
+  shape(() => { x.roundRect(w * 0.42, h * 0.34, w * 0.36, h * 0.36, 40); }, skin);
+  // curled fingers on top of the palm
+  [0.47, 0.57, 0.67].forEach(fx => shape(() => { x.roundRect(w * fx, h * 0.24, w * 0.1, h * 0.18, 22); }, skin));
+  if (pinched) {
+    // index and thumb meeting in a pinch
+    shape(() => { x.moveTo(w * 0.46, h * 0.42); x.quadraticCurveTo(w * 0.28, h * 0.36, w * 0.22, h * 0.52); x.quadraticCurveTo(w * 0.2, h * 0.6, w * 0.28, h * 0.6); x.quadraticCurveTo(w * 0.36, h * 0.52, w * 0.46, h * 0.52); x.closePath(); }, skin);
+    shape(() => { x.moveTo(w * 0.46, h * 0.62); x.quadraticCurveTo(w * 0.32, h * 0.72, w * 0.24, h * 0.62); x.quadraticCurveTo(w * 0.24, h * 0.56, w * 0.3, h * 0.56); x.quadraticCurveTo(w * 0.38, h * 0.6, w * 0.46, h * 0.56); x.closePath(); }, skin);
+    x.fillStyle = 'rgba(255,214,90,.95)'; [[0.17, 0.5], [0.2, 0.68], [0.12, 0.6]].forEach(([a, b]) => { x.beginPath(); x.arc(w * a, h * b, 7, 0, 7); x.fill(); });
+  } else {
+    // index pointing, thumb open
+    shape(() => { x.moveTo(w * 0.46, h * 0.42); x.quadraticCurveTo(w * 0.26, h * 0.3, w * 0.12, h * 0.4); x.quadraticCurveTo(w * 0.1, h * 0.48, w * 0.18, h * 0.5); x.quadraticCurveTo(w * 0.32, h * 0.5, w * 0.46, h * 0.52); x.closePath(); }, skin);
+    shape(() => { x.moveTo(w * 0.46, h * 0.6); x.quadraticCurveTo(w * 0.32, h * 0.8, w * 0.22, h * 0.76); x.quadraticCurveTo(w * 0.2, h * 0.7, w * 0.26, h * 0.66); x.quadraticCurveTo(w * 0.36, h * 0.62, w * 0.46, h * 0.56); x.closePath(); }, skin);
+  }
+}
+const handOpen = tex(256, 256, (x, w, h) => drawHand(x, w, h, false)), handPinch = tex(256, 256, (x, w, h) => drawHand(x, w, h, true));
+const helper = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 0.06), new THREE.MeshBasicMaterial({ map: handOpen, transparent: true, depthWrite: false, opacity: 0 }));
+helper.renderOrder = 10; BOOK.add(helper);
+let helperPhase = 0;
+function updateHelper(t, dt) {
+  const ph = t % 4.2; helperPhase = ph;
+  const show = !flip && !cornerNear;
+  const tipX = PW - 0.012, tipZ = PD / 2 - 0.012;
+  let x = tipX + 0.05, y = 0.06, z = tipZ + 0.03, op = 0, pinch = false;
+  if (ph < 0.7) { const k = ph / 0.7, e = 1 - Math.pow(1 - k, 3); x = tipX + 0.05 * (1 - e); y = 0.06 - 0.042 * e; z = tipZ + 0.03 * (1 - e); op = Math.min(1, k * 2); }
+  else if (ph < 2.1) { const k = (ph - 0.7) / 1.4, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; pinch = true; x = tipX - 0.06 * e; y = 0.018 + 0.03 * Math.sin(e * Math.PI * 0.8); z = tipZ - 0.02 * e; op = 1; }
+  else if (ph < 2.7) { const k = (ph - 2.1) / 0.6; x = tipX - 0.06 + 0.01 * k; y = 0.03 + 0.03 * k; z = tipZ - 0.02; op = 1 - k; }
+  helper.position.set(x + 0.021, y - 0.012, z + 0.012);
+  const target = show ? op : 0; helper.material.opacity += (target - helper.material.opacity) * Math.min(1, dt * 10);
+  helper.material.map = pinch ? handPinch : handOpen;
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  helper.quaternion.copy(BOOK.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(cam.getWorldQuaternion(new THREE.Quaternion())));
+}
 function updatePeel(t, dt) {
-  const ph = t % 4.2, tease = ph < 1.4 ? Math.sin(ph / 1.4 * Math.PI) : 0;      // every few seconds the corner lifts like it's about to turn
-  peelTarget = cornerNear ? 1.0 : 0.28 + 0.62 * tease * tease;
+  const ph = t % 4.2, tease = ph > 0.7 && ph < 2.3 ? Math.sin((ph - 0.7) / 1.6 * Math.PI) : 0;   // lifts while the helper hand pulls it
+  peelTarget = cornerNear ? 1.0 : 0.28 + 0.66 * tease;
   peelAmt += (peelTarget - peelAmt) * Math.min(1, dt * 6);
   const pa = peelGeo.attributes.position, a = flip ? 0 : peelAmt;
   for (let i = 0; i < pa.count; i++) {
@@ -1177,6 +1217,7 @@ renderer.setAnimationLoop(() => {
     m.position.y = y;
   }
   updatePeel(t, dt);
+  updateHelper(t, dt);
   updateLibrary(dt);
   renderer.toneMappingExposure += ((dim ? 0.45 : 1) - renderer.toneMappingExposure) * dt * 0.8;
   renderer.render(scene, camera);
