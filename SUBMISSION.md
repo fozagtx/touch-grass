@@ -27,3 +27,10 @@ Pip visits real places around the world, with each pop-up matching that place's 
 
 ## Hand interactions
 Pinch is the only verb, and pinch-and-hold paces your breathing. Pinch the corner to turn the page, pinch a character to make it react, pinch the moon to say goodnight. No controller is needed at any point. What excites us is VR as something calm and close, a story you hold in your lap.
+
+## Adapted / Significantly Updated summary
+N/A. Touch Grass is a **New Experience**. It was conceived and built entirely during the competition window, with no earlier codebase, prototype or shipped title.
+
+## Try-out links
+- **Play (Meta Quest Browser → Enter VR):** https://fozagtx.github.io/touch-grass/
+- **Source code:** https://github.com/fozagtx/touch-grass
