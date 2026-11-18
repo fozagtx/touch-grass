@@ -534,6 +534,29 @@ function updateBreath(dt) {
   b.orb.scale.setScalar(b.level);
 }
 
+// Storybook sky: giant paper cut-outs hanging on strings, gently swaying
+const skyToys = [];
+{
+  const string = new THREE.LineBasicMaterial({ color: 0xd8d0f0, transparent: true, opacity: 0.6 });
+  const add = (m, x, y, z, ph) => {
+    const g = new THREE.Group(); g.position.set(x, y, z); g.lookAt(0, y, 0);
+    m.position.y = -m.geometry.parameters.height; g.add(m);
+    g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 3, 0)]), string));
+    g.userData.ph = ph; scene.add(g); skyToys.push(g);
+  };
+  add(cutout(1.1, 1.1, D.moon(true)), 1.6, 2.6, -3.2, 0);
+  [[-2.2, 2.2, -2.8], [-0.9, 2.9, -3.6], [0.4, 2.4, -3.8], [2.8, 2.0, -2.0], [-3.0, 1.8, -1.2], [3.2, 2.5, -0.6]].forEach(([x, y, z], i) => add(cutout(0.45, 0.45, D.star(true)), x, y, z, i + 1));
+  D.balloon = (x, w, h) => {
+    cut(x, () => { x.ellipse(w / 2, h * .36, w * .38, h * .33, 0, 0, 7); }, '#e86a6a');
+    x.save(); x.beginPath(); x.ellipse(w / 2, h * .36, w * .38, h * .33, 0, 0, 7); x.clip();
+    ['#f2c14e', '#5fb3e8'].forEach((c, k) => { x.fillStyle = c; x.fillRect(w * (.3 + k * .24), 0, w * .12, h); }); x.restore();
+    x.strokeStyle = '#6a4a3a'; x.lineWidth = 6; x.beginPath(); x.moveTo(w * .35, h * .66); x.lineTo(w * .42, h * .8); x.moveTo(w * .65, h * .66); x.lineTo(w * .58, h * .8); x.stroke();
+    cut(x, () => x.rect(w * .38, h * .8, w * .24, h * .14), '#b07a4a');
+  };
+  add(cutout(0.8, 1.1, D.balloon), -1.8, 2.7, -2.4, 9);
+}
+function updateSkyToys(t) { skyToys.forEach(g => { g.rotation.z = Math.sin(t * 0.6 + g.userData.ph) * 0.06; g.position.y += Math.sin(t * 0.5 + g.userData.ph) * 0.0004; }); }
+
 function showPage(n) {
   page = n; stage.clear(); pops = []; tappables = []; dim = 0; breath = null; if (holding) breatheEnd();
   PAGES[n].build();
@@ -543,7 +566,7 @@ function showPage(n) {
 let flip = null;
 function turnPage() {
   if (flip) return;
-  note(880, 0.15, 'sine', 0.05);
+  paperSwish();
   const snap = document.createElement('canvas'); snap.width = right.c.width; snap.height = right.c.height;
   snap.getContext('2d').drawImage(right.c, 0, 0);
   const front = new THREE.CanvasTexture(snap); front.colorSpace = THREE.SRGBColorSpace;
@@ -554,7 +577,24 @@ function turnPage() {
   for (const m of [sheet, back]) { m.rotation.x = -Math.PI / 2; m.position.x = PW / 2; g.add(m); }
   stage.visible = false;
   flip = { g, geo, p: 0, swapped: false, base: Float32Array.from(geo.attributes.position.array) };
-  setTimeout(() => note(660, 0.25, 'triangle', 0.03), 250);
+  setTimeout(() => paperThump(), 780);
+}
+function paperSwish() {
+  actx ??= new AudioContext();
+  const len = actx.sampleRate * 0.7, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) { const k = i / len; d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * k) * (0.6 + 0.4 * Math.sin(k * 60)) ; }
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
+  bp.frequency.setValueAtTime(1200, actx.currentTime); bp.frequency.exponentialRampToValueAtTime(4200, actx.currentTime + 0.35); bp.frequency.exponentialRampToValueAtTime(1500, actx.currentTime + 0.7);
+  const g = actx.createGain(); g.gain.value = 0.22;
+  src.connect(bp).connect(g).connect(actx.destination); src.start();
+}
+function paperThump() {
+  const len = actx.sampleRate * 0.12, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600;
+  const g = actx.createGain(); g.gain.value = 0.35; src.connect(lp).connect(g).connect(actx.destination); src.start();
 }
 function updateFlip(dt) {
   if (!flip) return;
@@ -632,6 +672,7 @@ renderer.setAnimationLoop(() => {
   grassU.uTime.value = t; window.__skyU.uTime.value = t;
   updateWorld(t, dt);
   updateFlip(dt);
+  updateSkyToys(t);
   updateHands();
   updateBreath(dt);
   for (const m of pops) {
